@@ -1,0 +1,16 @@
+{
+  "name": "nev-dru",
+  "owner": {
+    "name": "nev-dru"
+  },
+  "plugins": [
+    {
+      "name": "agents-md",
+      "source": {
+        "source": "github",
+        "repo": "nev-dru/agents-md-plugin"
+      },
+      "description": "AGENTS.md generator, auditor, and org-context fill workflow."
+    }
+  ]
+}
