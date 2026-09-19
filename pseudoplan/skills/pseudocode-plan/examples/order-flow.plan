@@ -1,0 +1,129 @@
+# Order placed to label on the packing station
+intent: When checkout publishes an order, fulfilment asks shipping for a label, and the label is pushed to the printer at a packing station. Four systems, four transports.
+
++ type OrderPlaced
+    orderId: string
+    items: Item[]
+    address: Address
+    placedAt: timestamp
++ type FulfilmentRequest
+    orderId: string
+    items: Item[]
+    address: Address
+    priority?: string
++ type LabelRequest
+    requestId: string  // what shipping dedupes on
+    orderId: string
+    address: Address
+    weightGrams: int
++ type Label
+    labelId: string
+    trackingCode: string
+    pdfUrl: string
++ type FreightBooking
+    orderId: string
+    address: Address
+    weightGrams: int
++ type LabelPush
+    labelId: string
+    pdfUrl: string
+    stationId: string
+
+channel kafka:orders.placed  [external]
+    payload: OrderPlaced
+    delivery: at-least-once, ordered per orderId
+    owner: checkout team
++ channel nats:fulfilment.requested
+    payload: FulfilmentRequest
+    delivery: at-most-once, no replay
++ channel grpc:Shipping.CreateLabel
+    request: LabelRequest
+    response: Label
+    timeout: 2s
+    retries: 3, safe only when requestId is reused
++ channel http:freight-api/bookings  [external]
+    request: FreightBooking
+    timeout: 10s
+    owner: freight broker
++ channel emqx:stations/{stationId}/labels  [external]
+    payload: LabelPush
+    delivery: QoS 1, at-least-once
+    consumer: packing station firmware v4
+
+service ingest
++ file consumers/orders.ts
+  + fn onOrderPlaced(event: OrderPlaced)  [on kafka:orders.placed]
+      skip if event.items is empty
+      insert order row  [db:orders]
+      emit nats:fulfilment.requested { orderId, items, adress }
+      commit kafka offset
+
+service fulfilment
++ file handlers/fulfil.ts
+  + fn onFulfilmentRequested(req: FulfilmentRequest)  [on nats:fulfilment.requested]
+      weight = -> weigh.totalGrams(req.items)
+      if weight over 30 kg:
+          -> freight.bookPallet(req, weight)
+      else:
+          ?? WHY decides what a retry sends, and so whether shipping can spot a duplicate | ASSUMED requestId is the orderId | ALT a fresh uuid per attempt: simpler, but a retried call buys two labels
+          label = call grpc:Shipping.CreateLabel { requestId, orderId, address, weightGrams }
+          station = pick packing station for the order
+          -> push.sendToStation(label, station)
++ file freight.ts
+  + fn bookPallet(req, weight)
+      call http:freight-api/bookings { orderId, address, weightGrams }
+      on booking failure:
+          park the order for manual handling  [db:parked]
++ file weigh.ts
+  + fn totalGrams(items) -> int
+      sum item weights from the catalogue  [db:catalogue]
++ file push.ts
+  + fn sendToStation(label: Label, station)
+      emit emqx:stations/{stationId}/labels { labelId, pdfUrl, stationId }
+
+service shipping
+~ file rpc/labels.ts
+  ~ fn createLabel(req: LabelRequest) -> Label  [on grpc:Shipping.CreateLabel]
+      if a label exists for req.requestId: return it
+      buy postage from the carrier  [network:carrier] [timeout:5s] [throws]
+      insert label row  [db:labels]
+      return label
+
+trace Happy path
+  onOrderPlaced > skip if | event = { orderId: o_77, 2 items }
+  onOrderPlaced > insert order row | orders: + o_77
+  onOrderPlaced > emit nats | on the wire: FulfilmentRequest { orderId: o_77, items, … }
+  onOrderPlaced > commit | offset 1042 committed
+  onFulfilmentRequested > weigh.totalGrams |
+  totalGrams > sum item | 840 g
+  onFulfilmentRequested > call grpc | request: { requestId: o_77, orderId: o_77, weightGrams: 840 }
+  createLabel > if a label exists | none yet
+  createLabel > buy postage | carrier charges 4.10
+  createLabel > insert label row | labels: + l_19
+  createLabel > return label | response: { labelId: l_19, trackingCode: 1Z… }
+  onFulfilmentRequested > pick packing | station = ps_3
+  onFulfilmentRequested > push.sendToStation |
+  sendToStation > emit emqx | on the wire: LabelPush to stations/ps_3/labels
+
+trace Heavy order goes by freight
+  onFulfilmentRequested > weigh.totalGrams |
+  totalGrams > sum item | 42 000 g
+  onFulfilmentRequested > if weight over | over 30 kg, so no parcel label and no packing station
+  onFulfilmentRequested > freight.bookPallet |
+  bookPallet > call http | request: { orderId: o_91, weightGrams: 42000 }
+
+trace Fulfilment is down when the order arrives
+  onOrderPlaced > insert order row | orders: + o_77
+  onOrderPlaced > emit nats | ! nobody is subscribed, and at-most-once means the message is simply gone
+  onOrderPlaced > commit | ! offset committed, so kafka never redelivers. o_77 is stored and will never ship
+
+trace Kafka redelivers the same order
+  onOrderPlaced > skip if | the same event again: the earlier offset commit was lost
+  onOrderPlaced > insert order row | ! a second row for o_77, or a unique-key crash, depending on the schema
+  onOrderPlaced > emit nats | a second FulfilmentRequest for o_77
+  onFulfilmentRequested > call grpc | requestId = o_77 again
+  createLabel > if a label exists | found l_19, returned without buying postage. The requestId rule holds the line here
+
+not doing:
+  - no retry or dead-letter handling on the nats subject
+  - no change to the station firmware

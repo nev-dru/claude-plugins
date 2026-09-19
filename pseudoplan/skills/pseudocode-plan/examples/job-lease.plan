@@ -1,0 +1,80 @@
+# Job runner with leases
+intent: Workers claim queued jobs under a 30 second lease and renew it while they work. A job whose lease lapses goes back to the queue, and fails for good after three attempts.
+
++ type Job
+    id: string
+    state: queued | running | done | failed
+    leaseOwner?: string
+    leaseUntil?: timestamp
+    attempts: int
+
++ machine Job
+    states: queued, running, done, failed
+    initial: queued
+    final: done, failed
+    queued -> running  on a worker claims it
+    running -> done  on the worker finishes
+    running -> queued  on the lease lapses  after 30s
+    running -> failed  on the lease lapses  if attempts reached 3
+    * -> failed  on an operator cancels it  [external]
+
+service worker
++ file worker/run.ts
+  + fn claimNext(workerId) -> Job | null  [entry]
+      job = oldest queued job, locked for update  [db:jobs]
+      if no job: return null
+      transition Job to running
+      write leaseOwner, leaseUntil = now + 30s, attempts + 1  [db:jobs] [ttl:30s]
+      return job
+  + fn runJob(job, workerId)  [entry]
+      parallel:
+          -> heartbeat(job, workerId)
+          result = do the work against the target  [network:target-api] [timeout:120s]
+      -> finish(job, result)
+  + fn heartbeat(job, workerId)
+      every 10s:
+          extend leaseUntil to now + 30s where leaseOwner is this worker  [db:jobs] [ttl:30s]
+  + fn finish(job, result)
+      ?? WHY decides whether a worker that was frozen for a while can overwrite a job it no longer owns | ASSUMED finish trusts its caller | ALT finish writes only where leaseOwner is still this worker, and drops the result otherwise
+      transition Job to done
+      store the result and clear the lease  [db:jobs]
+
+service reaper
++ file reaper/sweep.ts
+  + fn sweep()  [entry]
+      every 5s:
+          for each running job whose leaseUntil has passed:  [db:jobs]
+              if attempts reached 3:
+                  transition Job to failed
+              else:
+                  transition Job to queued
+              clear the lease  [db:jobs]
+
+trace Happy path
+  claimNext > oldest queued | job j_1
+  claimNext > transition Job to running |
+  claimNext > write leaseOwner | lease: w_A until 0:30
+  runJob > heartbeat |
+  heartbeat > extend leaseUntil | +10s: lease: w_A until 0:40
+  heartbeat > extend leaseUntil | +10s: lease: w_A until 0:50
+  runJob > finish | +3s: work returned
+  finish > transition Job to done |
+  finish > store the result | j_1 done, lease cleared
+
+trace A worker freezes for 45 seconds
+  claimNext > transition Job to running | w_A claims j_1
+  claimNext > write leaseOwner | lease: w_A until 0:30
+  runJob > do the work | +45s: w_A sat in a long pause, so its heartbeat never ran
+  sweep > for each running job | the lease lapsed 15 seconds ago
+  sweep > transition Job to queued | j_1 is back in the queue, attempts = 1
+  claimNext > transition Job to running | +1s: w_B claims j_1
+  claimNext > write leaseOwner | lease: w_B until 1:16
+  finish > transition Job to done | ! +4s: w_A wakes up and finishes. Nothing checks that w_A still holds the lease
+  finish > store the result | ! w_A's result is stored and w_B's lease is cleared while w_B is still working
+
+not doing:
+  - no priority queues
+  - no per-job lease length
+
+decided:
+  - 2026-09-12 | run.claimNext | how long a job can sit with a dead worker before someone else may take it | chose: a 30s lease renewed every 10s | over: a 5 minute lease with no heartbeat: simpler, but a crashed worker blocks its job for 5 minutes

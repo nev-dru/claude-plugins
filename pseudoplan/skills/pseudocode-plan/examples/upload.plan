@@ -1,0 +1,105 @@
+# Upload with per-user dedupe
+intent: Identical files are stored once per user. Thumbnails render off the request path. Orphaned bucket objects are cleaned up nightly.
+
++ type FileRecord
+    id: string
+    userId: string
+    key: sha256 hex  // content hash, also the bucket object name
+    size: int
+    createdAt: timestamp
+    unique (userId, key)
+~ type UploadResponse = 201 FileRecord | 400 | 413 | 500
+
+~ file routes/upload.ts
+  ~ fn handleUpload(req) -> UploadResponse
+      validate file type and size, else return 400
+      user = -> auth.getUser(req)  [throws]
+      if user over quota: return 413
+      record = -> storage.saveFile(file, user)
+      -> queue.enqueueThumbnail(record.id)  [async]
+      -> metrics.recordUpload(record)
+      return 201 with record
+
+file auth.ts
+  fn getUser(req) -> User  [throws]  // unchanged
+
+~ file storage.ts
+  + fn saveFile(file, user) -> FileRecord
+      key = sha256(file.contents)
+      ?? WHY decides whether two users with identical files share one bucket object | ASSUMED dedupe per user | ALT dedupe globally: saves space, but an instant upload reveals that someone else already has the file
+      existing = -> findByKey(key, user)
+      if existing: return existing
+      upload contents to bucket under key  [network:bucket]
+      insert FileRecord row  [db:files]
+      on insert failure:
+          delete object from bucket  [network:bucket]
+          rethrow  [throws]
+  + fn findByKey(key, user) -> FileRecord | null
+      select where userId and key match  [db:files]
+  + fn purgeOrphans()
+      for each object in bucket older than 1 day:  [network:bucket]
+          row = select where key matches  [db:files]
+          if no row: delete object  [network:bucket]
+  fn getFile(id) -> FileRecord  // unchanged
+
+~ file queue.ts
+  ~ fn enqueueThumbnail(fileId)
+      ?? WHY decides which side needs to know about file types | ASSUMED skip non-images here | ALT let the worker decide, which keeps this function dumb
+      if file is not an image: return
+      publish thumbnail job  [network:queue] [throws]
+
+~ file cron.ts
+  ~ fn nightly()
+      parallel:
+          -> reports.sendDigest()
+          -> storage.purgeOrphans()
+
+file reports.ts
+  fn sendDigest()  [network:email] [db:files]  // unchanged
+
+trace Happy path
+  handleUpload > validate file | file = cat.png, 2.1 MB
+  handleUpload > auth.getUser | user = u_42, quota 40% used
+  handleUpload > over quota | under quota, continue
+  handleUpload > storage.saveFile |
+  saveFile > key = | key = 9f2c…
+  saveFile > findByKey |
+  findByKey > select | 0 rows
+  saveFile > if existing | nothing stored yet
+  saveFile > upload contents | bucket: + 9f2c…
+  saveFile > insert FileRecord | rows: + { id: f_881, userId: u_42, key: 9f2c… }
+  handleUpload > queue.enqueueThumbnail |
+  enqueueThumbnail > not an image | png, continue
+  enqueueThumbnail > publish | job queued for f_881
+  handleUpload > metrics.recordUpload |
+  handleUpload > return 201 | 201 { id: f_881 }
+
+trace Insert fails
+  handleUpload > validate file | file = cat.png
+  handleUpload > auth.getUser | user = u_42
+  handleUpload > storage.saveFile |
+  saveFile > key = | key = 9f2c…
+  saveFile > findByKey | no existing record
+  saveFile > upload contents | bucket: + 9f2c…
+  saveFile > insert FileRecord | ! insert throws, connection lost
+  saveFile > on insert failure |
+  saveFile > delete object | bucket: − 9f2c…
+  saveFile > rethrow |
+  handleUpload > storage.saveFile | ! the exception lands here and nothing catches it, so the framework answers with a bare 500
+
+trace Second user, same file, insert fails
+  handleUpload > auth.getUser | user = u_42. Earlier, u_17 stored the same cat.png: bucket has 9f2c…, row f_412
+  handleUpload > storage.saveFile |
+  saveFile > key = | key = 9f2c…, same bytes as u_17's file
+  saveFile > findByKey |
+  findByKey > select | 0 rows for u_42, because u_17's row belongs to someone else
+  saveFile > upload contents | bucket: 9f2c… overwritten with identical bytes
+  saveFile > insert FileRecord | ! insert throws
+  saveFile > delete object | ! bucket: − 9f2c…  u_17's row f_412 now points at nothing
+  saveFile > rethrow |
+  handleUpload > storage.saveFile | ! same unhandled 500 for u_42, and u_17's next download fails too
+
+not doing:
+  - no virus scanning in this change
+  - no resumable or chunked uploads
+  - getFile stays exactly as it is

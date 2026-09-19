@@ -11,6 +11,11 @@
         "repo": "nev-dru/agents-md-plugin"
       },
       "description": "AGENTS.md generator, auditor, and org-context fill workflow."
+    },
+    {
+      "name": "pseudoplan",
+      "source": "./pseudoplan",
+      "description": "Plan code changes as reviewable pseudocode, reviewed by a human in the browser before any code is written; or map an existing diff into the same review page."
     }
   ]
 }
