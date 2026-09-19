@@ -6,8 +6,8 @@ The agent writes a small text file: data shapes, contracts between systems, func
 effects tagged, open decisions pinned to the line they affect, and step-by-step scenarios including failures.
 A checker catches what can be caught mechanically. Then the plan opens on a local web page:
 
-- a flow diagram of functions, message channels and resources, in one lane per `group` or `service`; click
-  anything for its pseudocode or contract
+- a flow diagram of the main execution path, in one lane per `group` or `service`; click a box for its
+  pseudocode, its contract, and the helpers folded into it with `part of`
 - scenario walks that light up the diagram and show state after every step, with failures in red; the walk
   controls stay pinned at the bottom of the window and the diagram scrolls to each highlighted step
 - "Your call" decisions with the reason, the default and the alternatives, answerable in place

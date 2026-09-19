@@ -108,12 +108,13 @@ function parsePlan(src){
         let anchor = null;
         rest = rest.replace(/\s@\s*(?:(\S+):)?L?(\d+)(?:-L?(\d+))?(?=\s|$)/, (_, pth, a, b) => { anchor = { path: pth || file.path, start:+a, end:+(b || a) }; return ''; });
         let entry = false; rest = rest.replace(/\[entry\]/i, () => { entry = true; return ''; });
+        let partOf = null; rest = rest.replace(/\spart\s+of\s+([\w$.]+)(?=\s|$)/i, (_, r) => { partOf = r; return ''; });
         const on = [];
         rest = rest.replace(/\[on\s+([^\]\s]+)\]/gi, (_, c) => { on.push(c); return ''; });
         const h = takeTags(rest);
         const nm = h.text.trim().match(/^([\w$]+)/);
         const name = isRegion ? h.text.trim().split(/\s+/).slice(0, 4).join('_').replace(/[^\w$]/g, '') || 'region' : nm ? nm[1] : 'anonymous';
-        fn = { id:file.base+'.'+name, name, sig:h.text.trim(), status:statusOf(m[1]), tags:h.tags, chips:h.chips, res:h.res, on, entry, anchor, isRegion, comment, file, lines:[], _st:[] };
+        fn = { id:file.base+'.'+name, name, sig:h.text.trim(), status:statusOf(m[1]), tags:h.tags, chips:h.chips, res:h.res, on, entry, partOf, parent:null, parts:[], partProblem:null, anchor, isRegion, comment, file, lines:[], _st:[] };
         file.fns.push(fn); P.fns.push(fn); return;
       }
       if (fn){
@@ -205,6 +206,24 @@ function analyze(P, ctx){
     return any ? any.id : null;
   };
   P.byId = byId; P.ghosts = []; P.edgeFlags = new Map();
+  // `part of`: a function that is a detail of a bigger one. It keeps its own lines and anchor but is not a node;
+  // its calls and resources count as its top-level ancestor's.
+  P.fns.forEach(f => { f.parent = null; f.parts = []; f.partProblem = null; });
+  P.fns.forEach(f => {
+    if (!f.partOf) return;
+    const id = resolve(f.partOf, f);
+    if (!id || id === f.id){ f.partProblem = `${f.name} is "part of ${f.partOf}", which is not a function in this plan`; return; }
+    f.parent = id;
+  });
+  P.fns.forEach(f => {
+    const seen = new Set(); let g = f;
+    while (g && g.parent){ if (seen.has(g.id)) break; seen.add(g.id); g = byId.get(g.parent); }
+    if (g && g.parent && g === f){
+      seen.forEach(id => { const h = byId.get(id); h.parent = null; h.partProblem = `${h.name} is part of a chain of "part of" lines that loops back on itself`; });
+    }
+  });
+  P.fns.forEach(f => { if (f.parent) byId.get(f.parent).parts.push(f.id); });
+  P.topOf = id => { let g = byId.get(id); if (!g) return id; while (g.parent) g = byId.get(g.parent); return g.id; };
   P.fns.forEach(f => {
     const open = [];
     f.lines.forEach(l => {
@@ -243,6 +262,19 @@ function analyze(P, ctx){
       }
     });
   }));
+  if (P.fns.some(f => f.parent)){
+    const top = P.topOf, add = (arr, x) => { if (!arr.includes(x)) arr.push(x); }, flags = new Map();
+    P.edgeFlags.forEach((fl, key) => {
+      const [a, b] = key.split('>'), A = top(a), B = b.startsWith('?') ? b : top(b);
+      if (A === B) return;
+      const k = A + '>' + B, cur = flags.get(k);
+      if (!cur) flags.set(k, { ...fl, arms: fl.arms ? fl.arms.slice() : fl.arms });
+      else { cur.par = cur.par || fl.par; cur.async = cur.async || fl.async; cur.always = cur.always || fl.always; if (fl.arms) cur.arms = (cur.arms || []).concat(fl.arms); }
+    });
+    P.edgeFlags = flags;
+    P.fns.forEach(f => { if (!f.parent){ f.callees = []; f.callers = []; } });
+    flags.forEach((fl, key) => { const [A, B] = key.split('>'); add(byId.get(A).callees, B); if (byId.has(B)) add(byId.get(B).callers, A); });
+  }
   P.traces.forEach(tr => tr.steps.forEach(s => {
     s.fnId = resolve(s.ref, null); s.lineIdx = -1;
     if (s.fnId){
@@ -353,8 +385,12 @@ function runChecks(P, ctx){
         if (inside.size) out.push({ level:'warn', fnId:f.id, lineIdx:i, msg:`${f.name} does ${[...inside].join(' and ')} work inside a loop: one round trip per iteration` });
       }
     });
+    if (f.partProblem) out.push({ level:'error', fnId:f.id, lineIdx:-1, msg:f.partProblem });
+    if (f.parent) return;
     if (f.status === 'new' && !f.callers.length && !(f.on || []).length && !f.entry && !f.isRegion && !P.diff)
       out.push({ level:'warn', fnId:f.id, lineIdx:-1, msg:`${f.name} is new but nothing in this plan calls it` });
+    if (P.diff && !f.isRegion && !f.callers.length && !f.callees.length && !(f.on || []).length && !f.entry)
+      out.push({ level:'error', fnId:f.id, lineIdx:-1, msg:`${f.name} is not on any path: write the call that reaches it, mark it "part of" the function that uses it, or mark it [entry]` });
   });
   if (P.diff && P.files.length >= 4 && !P.files.some(f => f.service))
     out.push({ level:'warn', msg:`${P.files.length} files and no group lines: add "group Name" above each area of responsibility so the diagram shows lanes` });
@@ -493,17 +529,23 @@ function layoutMachine(M){
 const NODE_W = 168, RES_W = 112, CH_W = 204, NODE_H = 44, GAP_X = 52, GAP_Y = 16, PAD = 12;
 function layoutGraph(P){
   const nodes = new Map();
+  const top = P.topOf || (id => id), uniq = a => [...new Set(a)];
+  const subtree = id => { const out = [id]; for (let i = 0; i < out.length; i++) out.push(...(P.byId.get(out[i]).parts || [])); return out; };
+  const mergeFlag = (key, fl) => { const cur = P.edgeFlags.get(key); if (!cur) return P.edgeFlags.set(key, fl);
+    cur.always = cur.always || fl.always; cur.call = cur.call || fl.call; if (fl.arms) cur.arms = (cur.arms || []).concat(fl.arms); };
   P.fns.forEach(f => {
-    if ((f.status !== 'same' && !f.isRegion) || f.callers.length || f.callees.length || (f.on || []).length || f.lines.some(l => l.msg))
+    if (f.parent) return;
+    const own = subtree(f.id).map(id => P.byId.get(id));
+    if ((f.status !== 'same' && !f.isRegion) || f.callers.length || f.callees.length || own.some(g => (g.on || []).length || g.lines.some(l => l.msg)))
       nodes.set(f.id, { id:f.id, fn:f, w:NODE_W, callers:f.callers.filter(c => c !== f.id), callees:f.callees.filter(c => c !== f.id) });
   });
   P.channels.forEach(c => {
-    const id = 'ch:' + c.id, senders = [...new Set(c.senders.map(x => x.fnId))].filter(x => nodes.has(x)), handlers = c.handlers.filter(x => nodes.has(x));
+    const id = 'ch:' + c.id, senders = uniq(c.senders.map(x => top(x.fnId))).filter(x => nodes.has(x)), handlers = uniq(c.handlers.map(top)).filter(x => nodes.has(x));
     nodes.set(id, { id, channel:c, w:CH_W, callers:senders, callees:handlers.slice() });
     senders.forEach(x => nodes.get(x).callees.push(id));
     handlers.forEach(x => nodes.get(x).callers.push(id));
-    c.senders.forEach(x => { const f = P.byId.get(x.fnId), ai = armFor(f, x.lineIdx, f.lines[x.lineIdx].msg.at); P.edgeFlags.set(x.fnId + '>' + id, { call:x.mode === 'call', chan:true, always:ai == null, arms:ai == null ? null : [x.fnId + '#' + ai] }); });
-    handlers.forEach(x => P.edgeFlags.set(id + '>' + x, { chan:true }));
+    c.senders.forEach(x => { const f = P.byId.get(x.fnId), ai = armFor(f, x.lineIdx, f.lines[x.lineIdx].msg.at); mergeFlag(top(x.fnId) + '>' + id, { call:x.mode === 'call', chan:true, always:ai == null, arms:ai == null ? null : [x.fnId + '#' + ai] }); });
+    handlers.forEach(x => P.edgeFlags.set(id + '>' + top(x), { chan:true }));
   });
   P.ghosts.forEach(g => nodes.set(g, { id:g, ghost:true, w:NODE_W, label:g.slice(1), callers:[], callees:[] }));
   nodes.forEach(n => n.callees.forEach(c => { const t = nodes.get(c); if (t && t.ghost && !t.callers.includes(n.id)) t.callers.push(n.id); }));
@@ -520,12 +562,15 @@ function layoutGraph(P){
   };
   nodes.forEach(n => { n.layer = depth(n.id); });
   P.resources.forEach(R => {
-    const id = 'res:' + R.name, users = R.users.filter(u => nodes.has(u));
+    const id = 'res:' + R.name, users = uniq(R.users.map(top)).filter(u => nodes.has(u));
     nodes.set(id, { id, resource:true, w:RES_W, kind:R.kind, label:R.name, callers:users, callees:[], layer:Math.max(0, ...users.map(u => nodes.get(u).layer)) + 1 });
     users.forEach(u => {
       nodes.get(u).callees.push(id);
-      const f = P.byId.get(u), arms = []; let always = f.res.some(r => r.name === R.name);
-      f.lines.forEach((l, i) => { if (!l.res.some(r => r.name === R.name)) return; const ai = armFor(f, i, l.text.length); if (ai == null) always = true; else arms.push(u + '#' + ai); });
+      const arms = []; let always = false;
+      subtree(u).map(x => P.byId.get(x)).forEach(f => {
+        if (f.res.some(r => r.name === R.name)) always = true;
+        f.lines.forEach((l, i) => { if (!l.res.some(r => r.name === R.name)) return; const ai = armFor(f, i, l.text.length); if (ai == null) always = true; else arms.push(f.id + '#' + ai); });
+      });
       P.edgeFlags.set(u + '>' + id, { always, arms });
     });
   });
@@ -550,7 +595,7 @@ function layoutGraph(P){
   };
   const laneNames = [];
   P.files.forEach(f => { if (f.service && !laneNames.includes(f.service)) laneNames.push(f.service); });
-  nodes.forEach(n => { n.lane = laneOf(n); n.isolated = !n.callers.some(c => nodes.has(c)) && !n.callees.some(c => nodes.has(c)); });
+  nodes.forEach(n => { n.lane = laneOf(n); });
   if (nodes.size && [...nodes.values()].some(n => n.lane === '')) laneNames.push('');
   if (!laneNames.length) laneNames.push('');
 
@@ -566,8 +611,7 @@ function layoutGraph(P){
 
   const lanes = []; let laneY = PAD;
   laneNames.forEach(name => {
-    const mine = [...nodes.values()].filter(n => n.lane === name);
-    const flow = mine.filter(n => !n.isolated), lone = mine.filter(n => n.isolated).sort((a, b) => a.order - b.order);
+    const flow = [...nodes.values()].filter(n => n.lane === name);
     const top = laneY + LANE_HEAD;
     // The connected part: the same layered placement as before, but only among this lane's nodes.
     const ls = [];
@@ -592,13 +636,6 @@ function layoutGraph(P){
       flow.forEach(n => { minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); });
       flow.forEach(n => { n.y = n.y - minY + top; n.x = colX[n.layer]; });
       bottom = maxY - minY + top + NODE_H;
-    }
-    // Nodes with no edges at all: a wrapped grid on the shared columns, below the flow, not one tall column.
-    if (lone.length){
-      const cols = Math.max(1, colX.length);
-      const y0 = idx.length ? bottom + GAP_Y * 2 : top;
-      lone.forEach((n, i) => { n.x = colX[i % cols]; n.y = y0 + Math.floor(i / cols) * STEP; });
-      bottom = y0 + (Math.ceil(lone.length / cols) - 1) * STEP + NODE_H;
     }
     const h = Math.max(bottom - laneY, LANE_HEAD + NODE_H) + (named ? PAD : 0);
     lanes.push({ name, y:laneY, h });

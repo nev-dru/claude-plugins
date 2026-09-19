@@ -262,6 +262,15 @@ ol.steps > li{grid-template-columns:1fr auto auto}
 .pop .ln-static{text-align:right;padding-right:6px;font:400 12px/1.7 var(--mono);color:var(--muted)}
 .pop-empty{font-size:13px;color:var(--muted)}
 .pop-foot{display:flex;justify-content:flex-end;margin-top:8px}
+.parts{margin-top:10px;border-top:1px solid var(--rule);padding-top:6px}
+.parts-head{font-size:12px;color:var(--muted);margin:4px 0 2px}
+.part{margin:4px 0 0 0;border-left:3px solid var(--same);padding-left:8px}
+.part.s-new{border-left-color:var(--new)} .part.s-mod{border-left-color:var(--mod)}
+.part > summary{cursor:pointer;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:3px 0;list-style:none}
+.part > summary::before{content:'▸';color:var(--muted);font-size:11px} .part[open] > summary::before{content:'▾'}
+.part > summary .pop-file{margin:0}
+.part-list{margin:6px 0 0 8px;padding-left:8px;border-left:1px dashed var(--rule)}
+.fn.is-part{margin-top:6px}
 
 /* ---------- trace ---------- */
 .seg{display:flex;flex-wrap:wrap;gap:6px}
@@ -538,6 +547,7 @@ const STATUS_MARK = { new:'+', mod:'~', same:'', gone:'−' };
 let plan = null, CTX = (window.__BOOT__ || {}).ctx || null, CODE = (window.__BOOT__ || {}).code || {};
 const state = { sel:null, trace:0, step:-1, lens:new Set(), decisions:{}, notes:{}, tab:'plan', view:null, pop:null, foldedFns:new Set(), foldedFiles:new Set() };
 const lineKey = (f, i) => f.id + '#' + f.lines[i].raw;
+const topFn = id => (id && plan && plan.topOf) ? plan.topOf(id) : id;
 
 function rebuild(src){
   plan = analyze(parsePlan(src), CTX);
@@ -562,20 +572,22 @@ function traceMarks(){
   if (!tr) return m;
   for (let i = 0; i <= state.step; i++){
     const st = tr.steps[i]; if (!st.fnId) continue;
-    m.fns.add(st.fnId);
+    const me = topFn(st.fnId);
+    m.fns.add(me);
     const line = stepLine(st);
-    if (line) line.res.forEach(r => { m.resEdges.add(st.fnId+'>res:'+r.name); if (st.bad){ m.badResEdges.add(st.fnId+'>res:'+r.name); m.badNodes.add('res:'+r.name); } });
-    if (line && line.msg){ const k = st.fnId+'>ch:'+line.msg.chan; m.resEdges.add(k); m.chans.add('ch:'+line.msg.chan); if (st.bad){ m.badResEdges.add(k); m.badNodes.add('ch:'+line.msg.chan); } }
-    if (st.bad) m.badNodes.add(st.fnId);
+    if (line) line.res.forEach(r => { m.resEdges.add(me+'>res:'+r.name); if (st.bad){ m.badResEdges.add(me+'>res:'+r.name); m.badNodes.add('res:'+r.name); } });
+    if (line && line.msg){ const k = me+'>ch:'+line.msg.chan; m.resEdges.add(k); m.chans.add('ch:'+line.msg.chan); if (st.bad){ m.badResEdges.add(k); m.badNodes.add('ch:'+line.msg.chan); } }
+    if (st.bad) m.badNodes.add(me);
     const prev = i > 0 ? tr.steps[i-1] : null;
-    if (prev && prev.fnId && prev.fnId !== st.fnId){
-      m.edges.add(prev.fnId+'>'+st.fnId); m.edges.add(st.fnId+'>'+prev.fnId);
-      plan.channels.forEach(c => { [[prev.fnId, st.fnId], [st.fnId, prev.fnId]].forEach(([from, to]) => {
-        if (c.senders.some(x => x.fnId === from) && c.handlers.includes(to)){ m.chans.add('ch:'+c.id); m.resEdges.add(from+'>ch:'+c.id); m.resEdges.add('ch:'+c.id+'>'+to); }
+    if (prev && prev.fnId && topFn(prev.fnId) !== me){
+      const was = topFn(prev.fnId);
+      m.edges.add(was+'>'+me); m.edges.add(me+'>'+was);
+      plan.channels.forEach(c => { [[was, me], [me, was]].forEach(([from, to]) => {
+        if (c.senders.some(x => topFn(x.fnId) === from) && c.handlers.some(h => topFn(h) === to)){ m.chans.add('ch:'+c.id); m.resEdges.add(from+'>ch:'+c.id); m.resEdges.add('ch:'+c.id+'>'+to); }
       }); });
       const pl = stepLine(prev);
-      const returning = plan.byId.get(prev.fnId).callers.includes(st.fnId);
-      if (returning && ((pl && pl.tags.includes('throws')) || st.bad)) m.failEdges.add(st.fnId+'>'+prev.fnId);
+      const returning = plan.byId.get(was).callers.includes(me);
+      if (returning && ((pl && pl.tags.includes('throws')) || st.bad)) m.failEdges.add(me+'>'+was);
     }
   }
   return m;
@@ -585,9 +597,10 @@ function renderGraph(){
   const G = plan.graph, cur = currentStep(), curLine = stepLine(cur), M = traceMarks();
   const hot = new Set();
   if (curLine){
-    curLine.jumps.forEach(j => hot.add(cur.fnId+'>'+(j.target || j.ghost)));
-    curLine.res.forEach(r => hot.add(cur.fnId+'>res:'+r.name));
-    if (curLine.msg) hot.add(cur.fnId+'>ch:'+curLine.msg.chan);
+    const from = topFn(cur.fnId);
+    curLine.jumps.forEach(j => { const to = j.target ? topFn(j.target) : j.ghost; if (to !== from) hot.add(from+'>'+to); });
+    curLine.res.forEach(r => hot.add(from+'>res:'+r.name));
+    if (curLine.msg) hot.add(from+'>ch:'+curLine.msg.chan);
   }
   const flagged = new Set(plan.checks.filter(c => c.fnId).map(c => c.fnId));
   const lensOn = state.lens.size > 0;
@@ -671,9 +684,9 @@ function renderGraph(){
       return;
     }
     const f = n.fn, tags = TAG_NAMES.filter(t => f.allTags.has(t));
-    const isCur = cur && cur.fnId === f.id;
+    const isCur = cur && topFn(cur.fnId) === f.id;
     const cls = ['node', 's-'+f.status,
-      state.sel === f.id ? 'is-selected' : '',
+      topFn(state.sel) === f.id ? 'is-selected' : '',
       isCur ? (cur.bad ? 'is-active-bad' : 'is-active') : M.fns.has(f.id) ? 'is-walked' : '',
       bad ? 'is-bad' : '',
       state.changed && state.changed.fns.has(f.id) ? 'is-changed' : '',
@@ -926,6 +939,22 @@ function decisionHtml(key, l, d, scope){
     ${l.options.map((o, k) => `<label><input type="radio" name="${scope}:${esc(key)}" value="${k}" ${d.choice === k ? 'checked' : ''}><span>${k === 0 ? 'Assumed: ' : 'Alternative: '}${esc(o)}</span></label>`).join('')}
     <input type="text" placeholder="Or say what you want instead" aria-label="Your own answer" value="${esc(d.note || '')}"></fieldset>`;
 }
+function partsHtml(f, cur){
+  if (!f.parts.length) return '';
+  const one = id => {
+    const g = plan.byId.get(id), live = !!(cur && isWithin(cur.fnId, id));
+    const lines = g.lines.map((l, i) => {
+      if (l.kind === 'decision') return `<li class="line is-decision" style="--lvl:${l.level}">${decisionHtml(lineKey(g, i), l, state.decisions[lineKey(g, i)] || {}, 'pop')}</li>`;
+      const active = !!(cur && cur.fnId === g.id && cur.lineIdx === i);
+      return `<li class="line ${active ? 'is-active' : ''} ${active && cur.bad ? 'is-bad' : ''}" style="--lvl:${l.level}">${codeLine(g, l, i, active, cur)}</li>`;
+    }).join('');
+    return `<details class="part s-${g.status}" ${live ? 'open' : ''}><summary><span class="fn-sig">${typeRefs(g.sig)}</span><span class="word w-${g.status}">${STATUS_WORD[g.status]}</span>
+        ${g.tags.map((t, k) => `<span class="tag tag-${t}">${esc(g.chips[k])}</span>`).join('')}<span class="pop-file">${esc(g.file.path)}</span></summary>
+      ${lines ? `<ol class="lines">${lines}</ol>` : ''}${codeView(g)}${noteHost('fn:' + g.id)}${g.parts.map(one).join('')}</details>`;
+  };
+  return `<div class="parts"><div class="parts-head">Details, folded into this box</div>${f.parts.map(one).join('')}</div>`;
+}
+function isWithin(id, ancestor){ let g = plan.byId.get(id); while (g){ if (g.id === ancestor) return true; g = g.parent ? plan.byId.get(g.parent) : null; } return false; }
 function renderPop(){
   const pop = $('pop');
   if (state.pop && state.pop.startsWith('type:')){
@@ -960,9 +989,10 @@ function renderPop(){
     <div class="pop-file">${esc(f.file.path)}</div>${noteHost('fn:' + f.id)}
     ${f.lines.length ? `<ol class="lines">${lines}</ol>` : f.anchor ? '' : `<p class="pop-empty">This function is not changing, so the plan doesn't spell out its body.</p>`}
     ${codeView(f)}
+    ${partsHtml(f, cur)}
     <div class="pop-foot"><button class="btn btn-small" data-pop-plan>Find it in the plan</button></div>`;
   pop.hidden = false; pop.dataset.view = state.view;
-  if (cur && cur.fnId === f.id) markCode(pop, f, (stepLine(cur) || {}).at, 'is-live');
+  if (cur && topFn(cur.fnId) === f.id) markCode(pop, plan.byId.get(cur.fnId), (stepLine(cur) || {}).at, 'is-live');
   placePop();
 }
 function placePop(){
@@ -1004,13 +1034,14 @@ function renderDoc(){
     h += `<section class="block"><div class="file-row" data-file="${esc(file.path)}"><button class="fold" aria-expanded="true" aria-label="Collapse or expand ${esc(file.path)}"></button>
       <span class="w-${file.status}">${STATUS_MARK[file.status] || ''}</span><span>${esc(file.path)}</span><span class="word w-${file.status}">${STATUS_WORD[file.status]}</span>${file.service ? `<span class="word w-same">in ${esc(file.service)}</span>` : ''}
       <span class="row-end">${noteBtn('file:' + file.path, 'file ' + file.path)}</span></div>${noteHost('file:' + file.path)}<div class="file-body">`;
-    file.fns.forEach(f => {
-      h += `<article class="fn s-${f.status}" id="fn-${esc(f.id)}" data-fn="${esc(f.id)}">
+    const article = f => {
+      h += `<article class="fn s-${f.status} ${f.parent ? 'is-part' : ''}" id="fn-${esc(f.id)}" data-fn="${esc(f.id)}">
         <div class="fn-row ${f.lines.length ? 'can-fold' : ''}">${f.lines.length ? `<button class="fold" aria-expanded="true" aria-label="Collapse or expand ${esc(f.name)}"></button>` : '<span class="fold-gap"></span>'}
         <span class="fn-sig">${typeRefs(f.sig)}</span><span class="word w-${f.status}">${STATUS_WORD[f.status]}</span>
         ${(f.on || []).map(c => `<span class="tag tag-on">on <button class="chan-ref" data-chan="${esc(c)}">${esc(c)}</button></span>`).join('')}
         ${f.tags.map((t, k) => `<span class="tag tag-${t}">${esc(f.chips[k])}</span>`).join('')}
         ${f.comment && f.comment !== 'unchanged' ? `<span class="fn-comment">${esc(f.comment)}</span>` : ''}
+        ${f.parent && f.file !== plan.byId.get(f.parent).file ? `<span class="word w-same">in ${esc(f.file.path)}</span>` : ''}
         ${state.changed && state.changed.fns.has(f.id) ? '<span class="word w-rev">changed in this revision</span>' : ''}<span class="fn-sum"></span>
         <span class="row-end">${noteBtn('fn:' + f.id, 'function ' + f.id)}</span></div>${noteHost('fn:' + f.id)}`;
       if (f.lines.length){
@@ -1025,8 +1056,11 @@ function renderDoc(){
         });
         h += '</ol>';
       }
-      h += codeView(f) + '</article>';
-    });
+      h += codeView(f);
+      if (f.parts.length){ h += '<div class="part-list"><div class="parts-head">Details, folded into this box</div>'; f.parts.forEach(id => article(plan.byId.get(id))); h += '</div>'; }
+      h += '</article>';
+    };
+    file.fns.forEach(f => { if (!f.parent) article(f); });
     h += '</div></section>';
   });
   if (plan.notDoing.length) h += `<section class="block"><div class="shape-head"><h3>Left out on purpose</h3><span class="row-end">${noteBtn('notdoing', 'the "not doing" list')}</span></div>
@@ -1048,14 +1082,14 @@ function syncFolds(){
     if (!f || !btn) return;
     const folded = state.foldedFns.has(f.id);
     btn.setAttribute('aria-expanded', !folded);
-    a.querySelectorAll('.lines, .codeview').forEach(x => { x.hidden = folded; });
+    a.querySelectorAll(':scope > .lines, :scope > .codeview, :scope > .part-list').forEach(x => { x.hidden = folded; });
     const n = f.lines.filter(l => l.kind === 'code').length, open = openDecisions(f);
     a.querySelector('.fn-sum').innerHTML = folded ? `${n} ${n === 1 ? 'line' : 'lines'}${open ? `, <span class="ask">${open} to decide</span>` : ''}` : '';
   });
 }
 function unfold(id){
-  const f = plan.byId.get(id); if (!f) return;
-  state.foldedFns.delete(id); state.foldedFiles.delete(f.file.path);
+  let f = plan.byId.get(id);
+  while (f){ state.foldedFns.delete(f.id); state.foldedFiles.delete(f.file.path); f = f.parent ? plan.byId.get(f.parent) : null; }
 }
 function applyState(){
   renderGraph(); renderMachines(); renderTrace(); renderTimeline(); renderStats(); syncFolds();

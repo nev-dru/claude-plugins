@@ -53,6 +53,9 @@ ignore: package-lock.json, dist/, **/*.snap     changed files the review deliber
   + region MAX_BYTES, a 25 MB cap @ 4                     changed code that is not a function: imports, constants, config
   fn getFile(id) -> FileRecord @ 24-26 // unchanged
   fn helper() @ src/other.ts:40-52                        an anchor may name another file
+  + fn attrsJson() @ 60-70 part of saveFile                 a detail of a bigger function: keeps its anchor and its
+                                                           lines, but is not a box in the diagram. Its calls and
+                                                           resources count as saveFile's. Click saveFile to read it.
 - file src/legacy.ts                                     a file the change deletes
 ```
 
@@ -63,6 +66,9 @@ Errors
 - a function marked unchanged whose range contains changed lines
 - an anchor that points outside the file, or at a file that does not exist in the reviewed revision
 - a deleted file the plan does not list with `- file`
+- a top-level function that nothing reaches: no caller, no callee, no `[on ...]`, no `[entry]`, not `part of`
+  anything. Either write the call that reaches it, fold it into its user with `part of`, or mark it `[entry]`.
+  The diagram is the main execution path; details live inside the boxes.
 
 Warnings
 - a function marked `~` with no changed lines in its range, or `+` when most of its range already existed
@@ -166,6 +172,7 @@ Errors
 - a channel that is used but has no `channel` block
 - an `emit`/`call` that sends a field its payload type does not have
 - a scenario step that matches no line
+- a `part of` that names no function in the plan, or a chain of them that loops
 - a line the parser cannot place
 
 Warnings
