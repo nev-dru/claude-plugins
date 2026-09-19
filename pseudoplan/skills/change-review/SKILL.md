@@ -7,7 +7,7 @@ description: >
   with every function anchored to real file lines, proves with a checker that no changed line was left out,
   opens the flow diagram with the real code attached, and collects the reviewer's comments.
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # Change review
@@ -28,6 +28,10 @@ The format is in `../pseudocode-plan/references/format.md`; read its "Review mod
 2. **Read the change and its surroundings.** Read every changed function in full, plus the callers and callees
    needed to understand it. Do not describe code from its diff hunk alone.
 3. **Write the review plan** at `plans/<short-slug>-review.plan`, with `diff: <range>` at the top.
+   - Divide the changed files into 3 to 7 areas of responsibility and put a `group Name` line above each set
+     (`group tracing`, `group ledger`, `group HITL loop`). The diagram draws one lane per group, so a reviewer
+     sees what each cluster of functions is for even when nothing in the diff calls it. One file per group is
+     fine; a group per file is not, unless the files really are that independent.
    - Every changed function gets `+` or `~` and an anchor `@ start-end` (new-side lines, whole function).
    - Give body lines their own `@ line` anchors wherever a step maps to specific lines. These let the reviewer
      jump from a step to its code, and let scenario walks highlight the real lines.

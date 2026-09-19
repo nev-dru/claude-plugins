@@ -17,7 +17,9 @@ intent: one or two sentences on what this change is for
     timeout: 2s                        any other "key: value" is a term of the contract
     owner: / consumer: / retries: / loss: acceptable because ...
 
-service name                           files below belong to this deployable until the next service line
+group name                             files below belong to this group until the next group line; the diagram
+                                       draws one lane per group, so use it for areas of responsibility
+service name                           the same thing, for when the boundary is a deployable
 
 [+|~] file path/to/file.ext
   [+|~] fn name(args) -> ReturnType  [on kind:name] [tags]  // comment
@@ -179,6 +181,7 @@ Warnings
 - a `call` with a timeout, or to a handler that throws, where the caller does not say what happens on failure
 - a channel with senders but no handler, or the reverse, that is not `[external]`
 - a changed channel or payload type whose other side is external
+- in review mode, four or more files and no `group` or `service` lines
 
 The checks read tags and a few keywords (at-least-once, at-most-once, outbox, transaction, idempotent, dedupe,
 upsert, "exists for"). They catch omissions, not wrong logic. Scenarios and the reviewer catch the rest.

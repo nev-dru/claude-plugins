@@ -98,6 +98,9 @@ button.stat:hover{background:var(--accent-soft)}
 .legend .k-mod{color:var(--mod);font-family:var(--mono);font-weight:600}
 .graph-scroll{overflow-x:auto}
 .graph-scroll svg{display:block;min-width:560px;width:100%;height:auto}
+.lane-box{fill:var(--paper);stroke:var(--rule);stroke-width:1}
+.lane.is-alt .lane-box{fill:var(--panel)}
+.lane-name{font:600 11px var(--sans);fill:var(--muted);letter-spacing:.04em;text-transform:uppercase}
 .node{cursor:pointer}
 .node-box{fill:var(--panel);stroke:var(--rule);stroke-width:1}
 .node:hover .node-box{stroke:var(--muted)}
@@ -264,7 +267,13 @@ ol.steps > li{grid-template-columns:1fr auto auto}
 .seg{display:flex;flex-wrap:wrap;gap:6px}
 .seg button{border:1px solid var(--rule);background:transparent;border-radius:4px;padding:4px 10px;font-size:13px}
 .seg button[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--panel)}
-.trace-controls{display:flex;gap:8px;align-items:center;margin:10px 0}
+.walkbar{position:sticky;bottom:0;z-index:4;display:flex;gap:10px;align-items:center;padding:8px 18px;
+  background:var(--panel);border-top:1px solid var(--rule);box-shadow:0 -4px 12px rgba(0,0,0,.06)}
+.walkbar[hidden]{display:none}
+.walkbar select{border:1px solid var(--rule);background:var(--panel);border-radius:4px;padding:6px 8px;max-width:26ch}
+.walkbar .trace-count{margin-left:0}
+.walk-now{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12.5px var(--mono)}
+.walk-now.is-bad{color:var(--throws)}
 .trace-count{margin-left:auto;font:400 12px var(--mono);color:var(--muted)}
 .now{border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:4px;padding:8px 10px;min-height:58px}
 .now.is-bad{border-left-color:var(--throws);background:var(--bad-soft)}
@@ -444,12 +453,6 @@ dialog textarea{width:100%;height:46vh;border:1px solid var(--rule);border-radiu
       <div class="pane-head">
         <h2>Walk a scenario</h2>
         <div class="seg" id="traceSeg"></div>
-      </div>
-      <div class="trace-controls">
-        <button class="btn" id="prevBtn">Previous</button>
-        <button class="btn" id="nextBtn">Next</button>
-        <span class="hint keys-hint">or use the arrow keys</span>
-        <span class="trace-count" id="traceCount"></span>
         <span id="traceNoteBtn"></span>
       </div>
       <div id="traceNoteHost"></div>
@@ -490,6 +493,15 @@ dialog textarea{width:100%;height:46vh;border:1px solid var(--rule);border-radiu
     </div>
   </section>
 </main>
+
+<div class="walkbar" id="walkBar" hidden>
+  <select id="walkTrace" aria-label="Scenario"></select>
+  <button class="btn" id="prevBtn">Previous</button>
+  <button class="btn" id="nextBtn">Next</button>
+  <span class="trace-count" id="traceCount"></span>
+  <span class="walk-now" id="walkNow"></span>
+  <span class="hint keys-hint">arrow keys step too</span>
+</div>
 
 <div class="pop" id="pop" role="dialog" aria-label="Function pseudocode" hidden></div>
 
@@ -583,6 +595,10 @@ function renderGraph(){
   let labels = '';
   let s = `<svg viewBox="0 0 ${G.width} ${G.height}" style="max-width:${Math.round(G.width*1.2)}px;min-width:${Math.round(Math.min(G.width, 1700) * 0.82)}px" role="group" aria-label="Flow of the planned functions, the channels between them and the resources they touch">
   <defs>${marker('arrow','arrow')}${marker('hot','arrow-hot')}${marker('walk','arrow-walk')}${marker('ghost','arrow-fail')}${marker('fail','arrow-fail')}${marker('failback','arrow-fail','auto-start-reverse')}${marker('back','arrow','auto-start-reverse')}</defs>`;
+  if (G.named) G.lanes.forEach((L, i) => {
+    s += `<g class="lane ${i % 2 ? 'is-alt' : ''}"><rect class="lane-box" x="2" y="${L.y}" width="${G.width - 4}" height="${L.h}" rx="6"/>
+      <text class="lane-name" x="12" y="${L.y + 16}">${esc(L.name || 'no group')}</text></g>`;
+  });
   G.edges.forEach(e => {
     const a = G.nodes.get(e.from), b = G.nodes.get(e.to);
     const key = e.from+'>'+e.to;
@@ -669,7 +685,7 @@ function renderGraph(){
       <rect class="node-stripe" width="4" height="${NODE_H}" rx="2"/>
       ${mark ? `<text class="node-mark" x="13" y="19">${mark}</text>` : ''}
       <text class="node-name" x="${mark ? 27 : 13}" y="19">${esc(clip(f.name, Math.floor((NODE_W - (mark ? 27 : 13) - 8 - ((bad || flagged.has(f.id)) ? 13 : 0) - (open ? 13 : 0)) / 7.8)))}</text>
-      <text class="node-file" x="13" y="34">${esc(clip((f.file.service ? f.file.service + ': ' : '') + f.file.path.split('/').pop(), 19))}</text>
+      <text class="node-file" x="13" y="34">${esc(clip((f.file.service && !G.named ? f.file.service + ': ' : '') + f.file.path.split('/').pop(), 19))}</text>
       ${tags.map((t, i) => `<circle class="dot-${t}" cx="${NODE_W - 12 - i*11}" cy="31" r="3.5"><title>${t}</title></circle>`).join('')}
       ${bad ? `<text class="node-x" x="${NODE_W - 16}" y="18">✗<title>Something goes wrong here in this scenario</title></text>`
             : flagged.has(f.id) ? `<text class="node-warn" x="${NODE_W - 14}" y="18">!<title>Has a failing check</title></text>` : ''}
@@ -685,6 +701,8 @@ function renderTraceSeg(){
   $('traceSeg').innerHTML = plan.traces.map((t, i) =>
     `<button data-trace="${i}" aria-pressed="${i === state.trace}">${esc(t.name)}</button>`).join('') ||
     '<span class="hint">This plan has no scenarios</span>';
+  $('walkTrace').innerHTML = plan.traces.map((t, i) => `<option value="${i}" ${i === state.trace ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+  $('walkBar').hidden = !plan.traces.length;
 }
 function stepLabel(s){
   if (!s.fnId) return `${s.ref}: not found`;
@@ -698,6 +716,8 @@ function renderTrace(){
   $('nextBtn').disabled = !tr || state.step >= n - 1;
   $('traceCount').textContent = tr ? (state.step < 0 ? `${n} steps` : `${state.step+1} of ${n}`) : '';
   const cur = currentStep(), now = $('now');
+  $('walkNow').textContent = cur ? stepLabel(cur) : tr ? 'Press Next to start' : '';
+  $('walkNow').classList.toggle('is-bad', !!(cur && cur.bad));
   now.classList.toggle('is-bad', !!(cur && cur.bad));
   now.innerHTML = cur
     ? `<div class="now-where">${esc(stepLabel(cur))}</div><div class="now-note">${esc(cur.note || 'No state change')}</div>`
@@ -1121,6 +1141,22 @@ function setTab(t){
   if (t === 'log') renderLog();
   $('lenses').style.visibility = t === 'plan' ? 'visible' : 'hidden';
 }
+function revealNode(){
+  const node = $('graph').querySelector('.node.is-active, .node.is-active-bad'); if (!node) return;
+  const g = $('graph'), r = node.getBoundingClientRect(), gb = g.getBoundingClientRect();
+  const bar = $('walkBar').hidden ? window.innerHeight : $('walkBar').getBoundingClientRect().top;
+  // Horizontal: the diagram's own scroller.
+  const left = Math.max(gb.left, 0), right = Math.min(gb.right, window.innerWidth);
+  if (r.left < left || r.right > right) g.scrollLeft += (r.left + r.width / 2) - (left + right) / 2;
+  // Vertical: whichever ancestor scrolls (the left column, the whole layout in wide mode, or the window).
+  let box = g.parentElement;
+  while (box && box !== document.body){ const cs = getComputedStyle(box); if (/(auto|scroll)/.test(cs.overflowY) && box.scrollHeight > box.clientHeight + 4) break; box = box.parentElement; }
+  const cy = r.top + r.height / 2;
+  if (box && box !== document.body){
+    const b = box.getBoundingClientRect(), top = Math.max(b.top, 0), bottom = Math.min(b.bottom, bar);
+    if (r.top < top + 8 || r.bottom > bottom - 8) box.scrollTop += cy - (top + bottom) / 2;
+  } else if (r.top < 8 || r.bottom > bar - 8) window.scrollBy(0, cy - bar / 2);
+}
 function goStep(i){
   const tr = plan.traces[state.trace]; if (!tr) return;
   state.step = Math.max(-1, Math.min(tr.steps.length - 1, i));
@@ -1128,6 +1164,7 @@ function goStep(i){
   if (cur && cur.fnId){ state.sel = cur.fnId; unfold(cur.fnId); }
   if (state.tab !== 'plan') setTab('plan');
   applyState();
+  revealNode();
 }
 
 /* ----- review text ----- */
@@ -1281,6 +1318,7 @@ $('traceSeg').addEventListener('click', e => {
   const b = e.target.closest('[data-trace]'); if (!b) return;
   state.trace = +b.dataset.trace; state.step = -1; renderTraceSeg(); applyState();
 });
+$('walkTrace').addEventListener('change', e => { state.trace = +e.target.value; state.step = -1; renderTraceSeg(); applyState(); });
 $('prevBtn').addEventListener('click', () => goStep(state.step - 1));
 $('nextBtn').addEventListener('click', () => goStep(state.step + 1));
 $('steps').addEventListener('click', e => { const b = e.target.closest('[data-step]'); if (b) goStep(+b.dataset.step); });

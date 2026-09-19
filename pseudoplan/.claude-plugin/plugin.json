@@ -1,6 +1,6 @@
 {
   "name": "pseudoplan",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Two modes, one review page. Plan a change as pseudocode and get it approved before any code is written, or map an existing diff into the same diagram, with the real code attached, to review someone else's change. Feedback goes straight back to the agent.",
   "author": { "name": "local" },
   "keywords": ["planning", "pseudocode", "design-review", "contracts"]

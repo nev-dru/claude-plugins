@@ -91,4 +91,5 @@ the review text it produces. Everything else in the workflow stays the same.
 - `references/format.md`: the full grammar and the list of checks.
 - `examples/upload.plan`: one service; resources, a parallel block, a not-awaited call, decisions.
 - `examples/order-flow.plan`: four services and four transports; contracts, handlers, emit and call, a fork.
+  `service` and `group` lines become lanes in the diagram, so use them whenever a plan spans more than one area.
 - `examples/job-lease.plan`: a state machine, leases with TTLs, timers, a scenario with a clock, a decision log.

@@ -39,7 +39,7 @@ function parsePlan(src){
       }
       if ((m = t.match(/^(?:([+~])\s+)?machine\s+([\w$]+)/i))) { machine = { name:m[2], status:statusOf(m[1]), states:[], initial:'', final:[], transitions:[] }; P.machines.push(machine); file = null; return; }
       if (/^decided:?$/i.test(t)) { section = 'decided'; file = null; return; }
-      if ((m = t.match(/^service\s+(.+)/i))) { service = m[1].trim(); file = null; return; }
+      if ((m = t.match(/^(?:service|group)\s+(.+)/i))) { service = m[1].trim(); file = null; return; }
       if ((m = t.match(/^(?:([+~])\s+)?channel\s+(\S+)(.*)$/i))) {
         chan = { id:m[2], kind:m[2].split(':')[0], name:m[2].slice(m[2].indexOf(':')+1), status:statusOf(m[1]), external:/\[external\]/i.test(m[3]), props:[] };
         P.channels.push(chan); file = null; return;
@@ -356,6 +356,8 @@ function runChecks(P, ctx){
     if (f.status === 'new' && !f.callers.length && !(f.on || []).length && !f.entry && !f.isRegion && !P.diff)
       out.push({ level:'warn', fnId:f.id, lineIdx:-1, msg:`${f.name} is new but nothing in this plan calls it` });
   });
+  if (P.diff && P.files.length >= 4 && !P.files.some(f => f.service))
+    out.push({ level:'warn', msg:`${P.files.length} files and no group lines: add "group Name" above each area of responsibility so the diagram shows lanes` });
   const typeByName = new Map(P.types.map(T => [T.name, T]));
   P.channels.forEach(c => {
     const at = c.senders[0] || {};
@@ -538,40 +540,78 @@ function layoutGraph(P){
   [...nodes.values()].filter(n => n.layer === 0).forEach(n => visit(n.id));
   nodes.forEach(n => visit(n.id));
 
+  // Lanes: one horizontal band per group (a `group` or `service` line), in plan order. Files with no group share
+  // an unnamed lane. Columns (layers) are shared by every lane so a call between lanes still reads left to right.
+  const laneOf = n => {
+    if (n.fn) return n.fn.file.service || '';
+    if (n.channel){ const s = n.callers[0] || n.callees[0]; return s ? laneOf(nodes.get(s)) : ''; }
+    if (n.resource || n.ghost){ const u = n.callers[0]; return u ? laneOf(nodes.get(u)) : ''; }
+    return '';
+  };
+  const laneNames = [];
+  P.files.forEach(f => { if (f.service && !laneNames.includes(f.service)) laneNames.push(f.service); });
+  nodes.forEach(n => { n.lane = laneOf(n); n.isolated = !n.callers.some(c => nodes.has(c)) && !n.callees.some(c => nodes.has(c)); });
+  if (nodes.size && [...nodes.values()].some(n => n.lane === '')) laneNames.push('');
+  if (!laneNames.length) laneNames.push('');
+
   const layers = [];
   nodes.forEach(n => { (layers[n.layer] = layers[n.layer] || []).push(n); });
   for (let i = 0; i < layers.length; i++) layers[i] = (layers[i] || []).sort((a, b) => a.order - b.order);
-  const STEP = NODE_H + GAP_Y;
-  let widest = 0;
-  layers.forEach((l, i) => { if (l.length > layers[widest].length) widest = i; });
-  const place = (layer, neighbours) => {
-    const want = layer.map((n, i) => {
-      const ys = neighbours(n).map(id => nodes.get(id)).filter(x => x && x.y != null).map(x => x.y);
-      return { n, y: ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : i * STEP };
-    }).sort((a, b) => a.y - b.y || a.n.order - b.n.order);
-    want.forEach((w, i) => { w.n.y = i === 0 ? w.y : Math.max(w.y, want[i-1].n.y + STEP); });
-  };
-  if (layers.length){
-    layers[widest].forEach((n, i) => { n.y = i * STEP; });
-    for (let i = widest + 1; i < layers.length; i++) place(layers[i], n => n.callers);
-    for (let i = widest - 1; i >= 0; i--) place(layers[i], n => n.callees);
-  }
-  let minY = Infinity, maxY = -Infinity;
-  nodes.forEach(n => { minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); });
   const colX = []; let run = PAD;
   layers.forEach((l, i) => { colX[i] = run; run += Math.max(NODE_W, ...l.map(n => n.w)) + GAP_X; });
-  nodes.forEach(n => { n.y = n.y - minY + PAD; n.x = colX[n.layer]; });
+  const width = Math.max(PAD*2 + NODE_W, run - GAP_X + PAD);
+  const STEP = NODE_H + GAP_Y;
+  const named = laneNames.some(Boolean);
+  const LANE_HEAD = named ? 24 : 0, LANE_GAP = named ? 14 : 0;
+
+  const lanes = []; let laneY = PAD;
+  laneNames.forEach(name => {
+    const mine = [...nodes.values()].filter(n => n.lane === name);
+    const flow = mine.filter(n => !n.isolated), lone = mine.filter(n => n.isolated).sort((a, b) => a.order - b.order);
+    const top = laneY + LANE_HEAD;
+    // The connected part: the same layered placement as before, but only among this lane's nodes.
+    const ls = [];
+    flow.forEach(n => { (ls[n.layer] = ls[n.layer] || []).push(n); });
+    const idx = []; ls.forEach((l, i) => { if (l) idx.push(i); });
+    let widest = idx[0];
+    idx.forEach(i => { if (ls[i].length > ls[widest].length) widest = i; });
+    const here = new Set(flow.map(n => n.id));
+    const place = (layer, neighbours) => {
+      const want = layer.sort((a, b) => a.order - b.order).map((n, i) => {
+        const ys = neighbours(n).filter(id => here.has(id)).map(id => nodes.get(id)).filter(x => x.y != null).map(x => x.y);
+        return { n, y: ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : i * STEP };
+      }).sort((a, b) => a.y - b.y || a.n.order - b.n.order);
+      want.forEach((w, i) => { w.n.y = i === 0 ? w.y : Math.max(w.y, want[i-1].n.y + STEP); });
+    };
+    let bottom = top;
+    if (idx.length){
+      ls[widest].sort((a, b) => a.order - b.order).forEach((n, i) => { n.y = i * STEP; });
+      idx.filter(i => i > widest).forEach(i => place(ls[i], n => n.callers));
+      idx.filter(i => i < widest).reverse().forEach(i => place(ls[i], n => n.callees));
+      let minY = Infinity, maxY = -Infinity;
+      flow.forEach(n => { minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); });
+      flow.forEach(n => { n.y = n.y - minY + top; n.x = colX[n.layer]; });
+      bottom = maxY - minY + top + NODE_H;
+    }
+    // Nodes with no edges at all: a wrapped grid on the shared columns, below the flow, not one tall column.
+    if (lone.length){
+      const cols = Math.max(1, colX.length);
+      const y0 = idx.length ? bottom + GAP_Y * 2 : top;
+      lone.forEach((n, i) => { n.x = colX[i % cols]; n.y = y0 + Math.floor(i / cols) * STEP; });
+      bottom = y0 + (Math.ceil(lone.length / cols) - 1) * STEP + NODE_H;
+    }
+    const h = Math.max(bottom - laneY, LANE_HEAD + NODE_H) + (named ? PAD : 0);
+    lanes.push({ name, y:laneY, h });
+    laneY += h + LANE_GAP;
+  });
+  const height = nodes.size ? laneY - LANE_GAP + PAD : 60;
   const edges = [];
   nodes.forEach(n => n.callees.forEach(c => { if (nodes.has(c)) {
     const fl = P.edgeFlags.get(n.id+'>'+c) || {}, e = { from:n.id, to:c, ghost:!!nodes.get(c).ghost, res:!!nodes.get(c).resource, ...fl };
     if (!fl.always && fl.arms && fl.arms.length){ const [fid, ai] = [fl.arms[0].slice(0, fl.arms[0].lastIndexOf('#')), +fl.arms[0].slice(fl.arms[0].lastIndexOf('#') + 1)]; e.cond = P.byId.get(fid).lines[ai].arm.cond; e.condArms = fl.arms; }
     edges.push(e);
   } }));
-  return {
-    nodes, edges,
-    width: Math.max(PAD*2 + NODE_W, run - GAP_X + PAD),
-    height: nodes.size ? (maxY - minY) + NODE_H + PAD*2 : 60
-  };
+  return { nodes, edges, lanes, named, width, height };
 }
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { parsePlan, analyze, runChecks, diffChecks, layoutGraph, layoutMachine, armOf, dur, fmtDur };
