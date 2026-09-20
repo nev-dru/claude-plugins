@@ -392,6 +392,12 @@ function runChecks(P, ctx){
     if (P.diff && !f.isRegion && !f.callers.length && !f.callees.length && !(f.on || []).length && !f.entry)
       out.push({ level:'error', fnId:f.id, lineIdx:-1, msg:`${f.name} is not on any path: write the call that reaches it, mark it "part of" the function that uses it, or mark it [entry]` });
   });
+  P.traces.forEach(tr => {
+    const bare = tr.steps.filter(st => !st.note).length;
+    if (bare) out.push({ level:'warn', msg:`Scenario "${tr.name}": ${bare} ${bare === 1 ? 'step has' : 'steps have'} no state after it. Each step is one sentence of the story: say what is true once it has run` });
+  });
+  if (P.diff && !P.traces.length) out.push({ level:'warn', msg:`No scenario: tell the main run end to end as the first scenario, so the reviewer can read the change as a story` });
+  if (P.diff && P.traces.length && P.traces[0].steps.length < 5) out.push({ level:'warn', msg:`The first scenario, "${P.traces[0].name}", has ${P.traces[0].steps.length} steps: it should be the main run told end to end, usually 8 to 20 steps` });
   if (P.diff && P.files.length >= 4 && !P.files.some(f => f.service))
     out.push({ level:'warn', msg:`${P.files.length} files and no group lines: add "group Name" above each area of responsibility so the diagram shows lanes` });
   const typeByName = new Map(P.types.map(T => [T.name, T]));

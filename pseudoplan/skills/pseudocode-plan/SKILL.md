@@ -67,10 +67,14 @@ The tool is `scripts/plan-review.cjs` in this skill's directory (Node 18+, no de
   matters write a `??` on the exact line: `WHY` it matters, the `ASSUMED` default, and at least one `ALT` with
   its consequence. If WHY and a real alternative cannot be written, the question is not understood yet: read
   more code instead.
-- **Scenarios prove the design.** Write the happy path and one scenario per failure path that matters, including
-  the ugly ones: duplicate delivery, the other service down, a crash between two writes, two users at once.
-  Give the state after each step. Start the state with `!` on the step where things go wrong. Be honest: a
-  scenario that exposes a flaw in the plan is the most useful thing in it.
+- **The first scenario is the story of one run.** Pick one concrete input and tell what happens to it end to
+  end, 8 to 20 steps, in execution order. Every step gets a state sentence a reader could follow without
+  opening the code: what is true once that line has run. The page shows this scenario as a Story tab, read top
+  to bottom, so the sentences carry the meaning and the code is the evidence under each one.
+- **The other scenarios prove the design.** One scenario per failure path that matters, including the ugly
+  ones: duplicate delivery, the other service down, a crash between two writes, two users at once. Same rules:
+  a state after every step, `!` on the step where things go wrong. Be honest: a scenario that exposes a flaw in
+  the plan is the most useful thing in it.
 - **Branches are paths, so walk them.** Write conditions as `if`/`else`/`case`/`on ... failure` so the tool can
   see them. Each branch that carries risk (a different downstream system, a write, a failure path) deserves a
   scenario that takes it; the checker lists branches no scenario takes. Trivial guards such as "else return

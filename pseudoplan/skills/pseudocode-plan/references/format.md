@@ -74,6 +74,7 @@ Warnings
 - a function marked `~` with no changed lines in its range, or `+` when most of its range already existed
 - a changed function with no anchor
 - a line anchor outside its function's range
+- no scenario, or a first scenario with fewer than 5 steps: the first scenario is the main run told end to end
 
 ## State machines (optional: use when something has a lifecycle)
 
@@ -173,6 +174,9 @@ Errors
 - an `emit`/`call` that sends a field its payload type does not have
 - a scenario step that matches no line
 - a `part of` that names no function in the plan, or a chain of them that loops
+
+Warnings (both modes)
+- a scenario step with no state after it: each step is a sentence of the story
 - a line the parser cannot place
 
 Warnings

@@ -8,8 +8,10 @@ A checker catches what can be caught mechanically. Then the plan opens on a loca
 
 - a flow diagram of the main execution path, in one lane per `group` or `service`; click a box for its
   pseudocode, its contract, and the helpers folded into it with `part of`
-- scenario walks that light up the diagram and show state after every step, with failures in red; the walk
-  controls stay pinned at the bottom of the window and the diagram scrolls to each highlighted step
+- a Story tab: the scenario read top to bottom, one card per step with the state after it and, in review mode,
+  the real lines under it, with a sequence diagram across the groups above; Next just moves down one card
+- scenario walks on the Flow tab that light up the diagram and show state after every step, with failures in red;
+  the walk controls stay pinned at the bottom of the window and the diagram scrolls to each highlighted step
 - "Your call" decisions with the reason, the default and the alternatives, answerable in place
 - a Note button on every line, function, file, data shape, contract, scenario and step
 - state machines drawn from the plan, showing the current state as you walk a scenario

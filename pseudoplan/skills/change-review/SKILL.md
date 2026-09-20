@@ -7,7 +7,7 @@ description: >
   with every function anchored to real file lines, proves with a checker that no changed line was left out,
   opens the flow diagram with the real code attached, and collects the reviewer's comments.
 metadata:
-  version: "0.4.0"
+  version: "0.5.0"
 ---
 
 # Change review
@@ -49,20 +49,25 @@ The format is in `../pseudocode-plan/references/format.md`; read its "Review mod
    describe it. Anchor errors mean line numbers are off: re-read the file and correct them. Do not open the
    review with errors. Warnings about the code itself (an unhandled throw, a write plus an emit with no outbox)
    stay: they are findings for the reviewer.
-5. **Put findings where the reviewer will see them.**
+5. **Tell the main run as a story.** The first `trace` is one real run of the changed code, end to end, 8 to 20
+   steps in execution order, every step with a state sentence and an `@` anchor on the line it names. The
+   reviewer reads it top to bottom in the Story tab with the real lines under each sentence; that is how they
+   understand the change, so write the sentences for a reader who has not seen the code. `check` warns on
+   steps with no state and on a first scenario that is too short to be a run.
+6. **Put findings where the reviewer will see them.**
    - A suspected bug becomes a scenario that walks the real lines to the failure, with `!` on the step where it
      goes wrong. One honest failure scenario is worth more than a paragraph of concern.
    - A question only the author or reviewer can answer becomes a `??` on the line it concerns, with WHY, the
      ASSUMED reading, and an ALT reading with its consequence.
    - Do not soften. Do not pad with style remarks. Flow, contracts, failure paths and data shapes first.
-6. **Open and wait:** `plan-review open <plan>`, then `plan-review wait <plan> --timeout 540`
+7. **Open and wait:** `plan-review open <plan>`, then `plan-review wait <plan> --timeout 540`
    (exit 3: run wait again; 2: comments; 0: approved; 4: run open again).
-7. **On comments:** answer questions from the code. If a note says the plan misdescribes the code, fix the plan
+8. **On comments:** answer questions from the code. If a note says the plan misdescribes the code, fix the plan
    file (the page updates live) and wait again. When the reviewer is done, turn their notes into review comments
    for the author: one per note, addressed to file and line, stating the problem, the evidence (the scenario
    step if there is one) and a concrete suggestion. Show the drafts to the user. Post nothing anywhere unless
    the user asks.
-8. **On approval:** `plan-review stop <plan>` and report that the change was approved, with any notes left.
+9. **On approval:** `plan-review stop <plan>` and report that the change was approved, with any notes left.
 
 ## What makes this trustworthy
 
