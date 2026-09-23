@@ -8,10 +8,12 @@ A checker catches what can be caught mechanically. Then the plan opens on a loca
 
 - a flow diagram of the main execution path, in one lane per `group` or `service`; click a box for its
   pseudocode, its contract, and the helpers folded into it with `part of`
-- a Story tab: the scenario read top to bottom, one card per step with the state after it and, in review mode,
-  the real lines under it, with a sequence diagram across the groups above; Next just moves down one card
-- scenario walks on the Flow tab that light up the diagram and show state after every step, with failures in red;
-  the walk controls stay pinned at the bottom of the window and the diagram scrolls to each highlighted step
+- a sequence diagram of the chosen scenario: one lifeline per group, one arrow per step, failures in red. Click a
+  group to expand it into its functions, or show every line. The page never moves: the controls stay pinned at the
+  bottom of the window and the diagram scrolls inside its own box so the current step sits a third of the way down
+- a "This step" panel beside it: the state sentence, the pseudocode line, the whole function with the step's real
+  lines highlighted and syntax coloured, and the contract, data shape or resource that line touches
+- a Flow view of the same functions for "where does X live", which also lights up as you walk
 - "Your call" decisions with the reason, the default and the alternatives, answerable in place
 - a Note button on every line, function, file, data shape, contract, scenario and step
 - state machines drawn from the plan, showing the current state as you walk a scenario

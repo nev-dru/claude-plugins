@@ -22,7 +22,7 @@ group name                             files below belong to this group until th
 service name                           the same thing, for when the boundary is a deployable
 
 [+|~] file path/to/file.ext
-  [+|~] fn name(args) -> ReturnType  [on kind:name] [tags]  // comment
+  [+|~] fn name(args) -> ReturnType  [on kind:name] [tags]  // one-line summary, shown when the diagram is collapsed
       body line, one idea per line, nested by indentation
       x = -> file.fn(args)             call another planned function; "file" is the basename without extension,
                                        and may be dropped for a function in the same file

@@ -21,7 +21,7 @@ const cases = [
   { ex:'order-flow', name:'order-flow-fork', trace:1, steps:4, click:null },
   { ex:'job-lease', name:'job-lease-frozen-worker', trace:1, steps:8, click:null },
   { ex:'job-lease', name:'job-lease-decisions', trace:0, steps:0, click:'#tabLog' },
-  { ex:'order-flow', name:'order-flow-story', trace:1, steps:4, click:'[data-gview="story"]' },
+  { ex:'order-flow', name:'order-flow-flow', trace:1, steps:4, click:'[data-gview="flow"]' },
 ];
 const DIFF = `async ([a, b, mask]) => { const load = s => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = 'data:image/png;base64,' + s; });
   const [A, B] = await Promise.all([load(a), load(b)]); if (A.width !== B.width || A.height !== B.height) return { size:[A.width, A.height, B.width, B.height] };

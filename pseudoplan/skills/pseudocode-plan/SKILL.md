@@ -97,4 +97,5 @@ the review text it produces. Everything else in the workflow stays the same.
 - `examples/order-flow.plan`: four services and four transports; contracts, handlers, emit and call, a fork.
   `service` and `group` lines become lanes in the diagram, so use them whenever a plan spans more than one area.
   `part of` folds a small helper into the box of the function that uses it, so the diagram stays at whiteboard altitude.
+  A `// summary` after a function signature is what the sequence view shows for it when its group is collapsed.
 - `examples/job-lease.plan`: a state machine, leases with TTLs, timers, a scenario with a clock, a decision log.

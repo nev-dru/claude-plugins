@@ -7,7 +7,7 @@ description: >
   with every function anchored to real file lines, proves with a checker that no changed line was left out,
   opens the flow diagram with the real code attached, and collects the reviewer's comments.
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
 ---
 
 # Change review
@@ -37,7 +37,9 @@ The format is in `../pseudocode-plan/references/format.md`; read its "Review mod
      it (`+ fn attrs_json() @ 60-70 part of record_tool_result`). Read the real callers to decide; a helper
      called from unchanged code is `part of` the nearest changed function on that path, or `[entry]` if it
      really starts a path of its own. `check` refuses a top-level function that nothing reaches.
-   - Every changed function gets `+` or `~` and an anchor `@ start-end` (new-side lines, whole function).
+   - Every changed function gets `+` or `~`, an anchor `@ start-end` (new-side lines, whole function), and a
+     `// one-line summary` of what it does. The summary is the label the sequence diagram shows when a group
+     is collapsed, so write it as the sentence a reader needs at that altitude.
    - Give body lines their own `@ line` anchors wherever a step maps to specific lines. These let the reviewer
      jump from a step to its code, and let scenario walks highlight the real lines.
    - Changed code outside functions (imports, constants, config, schema) goes in a `region`.

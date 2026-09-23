@@ -98,35 +98,40 @@ button.stat:hover{background:var(--accent-soft)}
 .legend .k-mod{color:var(--mod);font-family:var(--mono);font-weight:600}
 .graph-scroll{overflow-x:auto}
 .graph-scroll svg{display:block;min-width:560px;width:100%;height:auto}
-.seq-scroll{overflow-x:auto;margin-bottom:10px}
-.seq{display:block;width:100%;height:auto;min-width:420px}
-.seq-head{fill:var(--paper);stroke:var(--rule)}
-.seq-name{font:600 11px var(--sans);fill:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.seq-tools{display:flex;gap:6px;align-items:center} .seq-tools[hidden]{display:none}
+.seq-tools .btn[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+.seq-box{overflow:auto;max-height:calc(100vh - 300px);min-height:200px;border:1px solid var(--rule);border-radius:4px;background:var(--paper)}
+.layout.is-wide .seq-box{max-height:calc(100vh - 220px)}
+.seq{display:block}
+.seq-ghead{fill:var(--panel);stroke:var(--rule)} .seq-group{cursor:pointer} .seq-group:hover .seq-ghead{stroke:var(--muted)}
+.seq-gname{font:600 11px var(--sans);fill:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.seq-head{fill:var(--panel);stroke:var(--rule)}
+.seq-name{font:600 11px var(--sans);fill:var(--muted);letter-spacing:.04em;text-transform:uppercase} .seq-name.is-fn{font:500 11.5px var(--mono);fill:var(--ink);text-transform:none;letter-spacing:0}
 .seq-life{stroke:var(--rule);stroke-dasharray:3 3}
 .seq-row{fill:transparent}
 .seq-step{cursor:pointer}
 .seq-step:hover .seq-row{fill:var(--accent-soft);opacity:.5}
-.seq-step.is-now .seq-row{fill:var(--accent-soft)}
+.seq-step.is-now .seq-row{fill:var(--accent-soft);opacity:1}
 .seq-arrow{stroke:var(--same);stroke-width:1.4;fill:none}
 .seq-step.is-done .seq-arrow{stroke:var(--walk)} .seq-step.is-now .seq-arrow{stroke:var(--accent);stroke-width:2}
 .seq-step.is-bad .seq-arrow{stroke:var(--throws)}
 .seq-tip{fill:var(--same)}
-.seq-label{font:400 11px var(--mono);fill:var(--ink)} .seq-step.is-done .seq-label{fill:var(--muted)} .seq-step.is-bad .seq-label{fill:var(--throws)}
+.seq-label{font:400 11.5px var(--mono);fill:var(--ink);paint-order:stroke;stroke:var(--paper);stroke-width:3px;stroke-linejoin:round} .seq-step.is-done .seq-label{fill:var(--muted)} .seq-step.is-bad .seq-label{fill:var(--throws)} .seq-step.is-now .seq-label{font-weight:600}
 .seq-n{font:400 10.5px var(--mono);fill:var(--muted)}
-.stops{display:flex;flex-direction:column;gap:8px}
-.stop{border:1px solid var(--rule);border-left:3px solid var(--rule);border-radius:4px;padding:8px 10px;cursor:pointer;background:var(--panel)}
-.stop:hover{border-color:var(--muted)}
-.stop.is-done{border-left-color:var(--walk)}
-.stop.is-now{border-left-color:var(--accent);border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
-.stop.is-bad{border-left-color:var(--throws)} .stop.is-now.is-bad{border-color:var(--throws);box-shadow:0 0 0 1px var(--throws)}
-.stop-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
-.stop-n{font:600 12px var(--mono);color:var(--muted);min-width:2ch}
-.stop.is-now .stop-n{color:var(--accent)}
-.stop-line{font:400 13px var(--mono);margin:4px 0 0 calc(2ch + 8px)}
-.stop-note{margin:4px 0 0 calc(2ch + 8px);border-left:3px solid var(--accent);padding:3px 8px;background:var(--accent-soft);font-size:13px}
+.step{padding:10px 14px 40px}
+.step-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.step-intro h3{font-size:15px;margin-bottom:4px}
+.step-list{margin:8px 0 0;padding-left:1.6em;font:400 12.5px/1.7 var(--mono)}
+.stop-n{font:600 12px var(--mono);color:var(--accent);min-width:2ch}
+.stop-line{font:400 13px var(--mono);margin:6px 0 0}
+.stop-note{margin:6px 0 0;border-left:3px solid var(--accent);padding:4px 8px;background:var(--accent-soft);font-size:13.5px}
 .stop-note.is-bad{border-left-color:var(--throws);background:var(--bad-soft)}
 .stop-note.is-empty{border-left-color:var(--rule);background:transparent;color:var(--muted);font-style:italic}
-.stop .codeview{margin:6px 0 0 calc(2ch + 8px)}
+.step .codeview{margin-top:10px} .codeview.is-full{max-height:min(52vh,640px);overflow:auto}
+.step-pseudo{margin-top:10px;border:1px solid var(--rule);border-radius:4px;padding:4px 8px}
+.touch{margin-top:12px} .touch h4{font-size:13px;font-weight:600;margin-bottom:4px}
+.h-k{color:var(--accent);font-weight:500} .h-s{color:var(--new)} .h-n{color:var(--mod)} .h-c{color:var(--muted);font-style:italic}
+.cl.is-live code{font-weight:500}
 .lane-box{fill:var(--paper);stroke:var(--rule);stroke-width:1}
 .lane.is-alt .lane-box{fill:var(--panel)}
 .lane-name{font:600 11px var(--sans);fill:var(--muted);letter-spacing:.04em;text-transform:uppercase}
@@ -464,7 +469,8 @@ dialog textarea{width:100%;height:46vh;border:1px solid var(--rule);border-radiu
   <section class="col-left" id="colLeft">
     <div class="pane graph-pane" id="graphPane">
       <div class="pane-head">
-        <span class="seg" id="viewSeg"><button data-gview="story" aria-pressed="false">Story</button><button data-gview="flow" aria-pressed="true">Flow</button></span>
+        <span class="seg" id="viewSeg"><button data-gview="seq" aria-pressed="false">Sequence</button><button data-gview="flow" aria-pressed="true">Flow</button></span>
+        <span class="seq-tools" id="seqTools"><button class="btn btn-small" data-seq="open">Expand all</button><button class="btn btn-small" data-seq="close">Collapse all</button><button class="btn btn-small" data-seq="lines" aria-pressed="false">Every line</button></span>
         <button class="btn btn-small" id="wideBtn" aria-pressed="false">Widen diagram</button>
         <div class="legend">
           <span><span class="k-new">+</span> new</span>
@@ -480,7 +486,7 @@ dialog textarea{width:100%;height:46vh;border:1px solid var(--rule);border-radiu
         </div>
       </div>
       <div class="graph-scroll" id="graph"></div>
-      <div id="story" hidden></div>
+      <div class="seq-box" id="seqBox" hidden></div>
     </div>
 
     <div class="pane" id="machPane" hidden>
@@ -508,6 +514,7 @@ dialog textarea{width:100%;height:46vh;border:1px solid var(--rule);border-radiu
 
   <section class="col-right" id="colRight">
     <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="tabStep" aria-selected="false">This step</button>
       <button class="tab" role="tab" id="tabPlan" aria-selected="true">Plan</button>
       <button class="tab" role="tab" id="tabLog" aria-selected="false">Decisions</button>
       <button class="tab" role="tab" id="tabSource" aria-selected="false">Source text</button>
@@ -519,6 +526,7 @@ dialog textarea{width:100%;height:46vh;border:1px solid var(--rule);border-radiu
         <button class="lens lens-mutates" data-lens="mutates" aria-pressed="false">mutates</button>
       </div>
     </div>
+    <div class="step" id="step" hidden></div>
     <div class="doc" id="doc"></div>
     <div class="log" id="log" hidden></div>
     <div class="source" id="source" hidden>
@@ -575,7 +583,7 @@ const STATUS_WORD = { new:'new', mod:'modified', same:'unchanged', gone:'removed
 const STATUS_MARK = { new:'+', mod:'~', same:'', gone:'−' };
 
 let plan = null, CTX = (window.__BOOT__ || {}).ctx || null, CODE = (window.__BOOT__ || {}).code || {};
-const state = { gview:null, sel:null, trace:0, step:-1, lens:new Set(), decisions:{}, notes:{}, tab:'plan', view:null, pop:null, foldedFns:new Set(), foldedFiles:new Set() };
+const state = { gview:null, seqOpen:new Set(), seqLines:false, tabPicked:false, sel:null, trace:0, step:-1, lens:new Set(), decisions:{}, notes:{}, tab:'plan', view:null, pop:null, foldedFns:new Set(), foldedFiles:new Set() };
 const lineKey = (f, i) => f.id + '#' + f.lines[i].raw;
 const topFn = id => (id && plan && plan.topOf) ? plan.topOf(id) : id;
 
@@ -589,8 +597,9 @@ function rebuild(src){
   $('title').textContent = plan.title;
   $('intent').textContent = (plan.diff ? `Reviewing the change in ${plan.diff}. ` : '') + plan.intent;
   if (state.view == null) state.view = plan.fns.some(f => f.anchor) ? 'both' : 'pseudo';
-  if (state.gview == null) state.gview = plan.diff && plan.traces.length ? 'story' : 'flow';
-  renderTraceSeg(); renderChecks(); renderDoc(); applyState();
+  if (state.gview == null) state.gview = plan.traces.length ? 'seq' : 'flow';
+  if (!state.tabPicked && plan.traces.length && state.tab === 'plan') state.tab = 'step';
+  setTab(state.tab); renderTraceSeg(); renderChecks(); renderDoc(); applyState();
   $('parseInfo').textContent = `${plan.fns.length} functions in ${plan.files.length} files, ${plan.traces.length} scenarios`;
 }
 
@@ -741,65 +750,132 @@ function renderGraph(){
 const clip = (s, n) => s.length > n ? s.slice(0, n-1) + '…' : s;
 
 /* ----- trace ----- */
-/* ----- story: one scenario, top to bottom ----- */
+/* ----- sequence: the scenario as lifelines and arrows, collapsible ----- */
 function laneOfFn(id){ const n = plan.graph.nodes.get(topFn(id)); return n ? n.lane : ''; }
-function renderStory(){
-  const on = state.gview === 'story';
-  $('graph').hidden = on; $('story').hidden = !on;
+function groupOf(st){ return !st.fnId ? '?' : plan.graph.named ? (laneOfFn(st.fnId) || 'no group') : ''; }
+function seqOpen(g){ return !plan.graph.named || plan.graph.lanes.length < 2 || state.seqOpen.has(g); }
+function seqCol(st){ if (!st.fnId) return '?'; const g = groupOf(st); return seqOpen(g) ? 'f:' + topFn(st.fnId) : 'g:' + g; }
+function seqRows(tr){
+  const rows = [];
+  tr.steps.forEach((st, i) => {
+    const k = state.seqLines ? 'i' + i : seqCol(st), last = rows[rows.length - 1];
+    if (last && last.key === k){ last.to = i; last.bad = last.bad || st.bad || st.lineIdx < 0; }
+    else rows.push({ key:k, from:i, to:i, bad:!!(st.bad || st.lineIdx < 0) });
+  });
+  return rows;
+}
+function fnSummary(id){ const f = plan.byId.get(id); if (!f) return id; if (f.comment && f.comment !== 'unchanged') return f.comment; const l = f.lines.find(x => x.kind === 'code'); return f.name + (l ? ': ' + l.text : ''); }
+function rowLabel(tr, row){
+  const st = tr.steps[row.from], n = row.to - row.from + 1;
+  if (!st.fnId) return st.ref + ': not found';
+  if (state.seqLines || n === 1) return (plan.graph.named ? plan.byId.get(st.fnId).name + ': ' : '') + (st.lineIdx >= 0 ? plan.byId.get(st.fnId).lines[st.lineIdx].text : 'no line matches "' + st.frag + '"');
+  if (row.key.startsWith('f:')) return fnSummary(row.key.slice(2)) + (n > 1 ? `  (${n} lines)` : '');
+  const names = []; for (let i = row.from; i <= row.to; i++){ const nm = plan.byId.get(topFn(tr.steps[i].fnId)).name; if (!names.includes(nm)) names.push(nm); }
+  return names.join(', ') + (n > names.length ? `  (${n} lines)` : '');
+}
+function renderSeq(){
+  const on = state.gview === 'seq';
+  $('graph').hidden = on; $('seqBox').hidden = !on; $('seqTools').hidden = !on || !plan.graph.named || plan.graph.lanes.length < 2;
   $('graphPane').querySelector('.legend').hidden = on;
   document.querySelectorAll('[data-gview]').forEach(b => b.setAttribute('aria-pressed', b.dataset.gview === state.gview));
+  $('seqTools').querySelector('[data-seq="lines"]').setAttribute('aria-pressed', state.seqLines);
   if (!on) return;
   const tr = plan.traces[state.trace];
-  if (!tr){ $('story').innerHTML = '<p class="hint">This plan has no scenarios. A scenario is the story of one run, one step per line.</p>'; return; }
-  const named = plan.graph.named;
-  // participants: lanes when the plan has groups, otherwise the top-level functions the scenario touches
-  const who = st => !st.fnId ? '?' : named ? laneOfFn(st.fnId) || 'no group' : topFn(st.fnId);
-  const label = id => named ? id : (plan.byId.get(id) || { name:id }).name;
-  const parts = []; tr.steps.forEach(st => { const w = who(st); if (!parts.includes(w)) parts.push(w); });
-  const PW = Math.max(120, Math.min(190, Math.floor(1100 / Math.max(1, parts.length)))), X0 = 16, Y0 = 46, RH = 24;
-  const px = w => X0 + parts.indexOf(w) * PW + PW / 2;
-  const W = X0 * 2 + parts.length * PW, H = Y0 + tr.steps.length * RH + 14;
-  let svg = `<svg class="seq" viewBox="0 0 ${W} ${H}" style="max-width:${W}px" role="img" aria-label="Sequence of the scenario across ${named ? 'groups' : 'functions'}">`;
-  parts.forEach((w, i) => { const x = X0 + i * PW;
-    svg += `<rect class="seq-head" x="${x + 6}" y="6" width="${PW - 12}" height="28" rx="4"/><text class="seq-name" x="${x + PW / 2}" y="24" text-anchor="middle">${esc(clip(label(w), Math.floor((PW - 20) / 7.2)))}</text>
-      <line class="seq-life" x1="${x + PW / 2}" y1="34" x2="${x + PW / 2}" y2="${H - 6}"/>`; });
-  tr.steps.forEach((st, i) => {
-    const y = Y0 + i * RH, me = who(st), prev = i ? who(tr.steps[i - 1]) : me, x1 = px(prev), x2 = px(me);
-    const cls = `seq-step ${i === state.step ? 'is-now' : i < state.step ? 'is-done' : ''} ${st.bad || st.lineIdx < 0 ? 'is-bad' : ''}`;
-    const text = clip((named && st.fnId ? plan.byId.get(st.fnId).name + ': ' : '') + (st.fnId && st.lineIdx >= 0 ? plan.byId.get(st.fnId).lines[st.lineIdx].text : st.frag), 44);
-    svg += `<g class="${cls}" data-seq-step="${i}" tabindex="0" role="button" aria-label="Step ${i + 1}: ${esc(stepLabel(st))}"><rect class="seq-row" x="2" y="${y - 12}" width="${W - 4}" height="${RH}" rx="3"/>`;
-    if (x1 === x2) svg += `<path class="seq-arrow" d="M${x1},${y - 6} h22 v10 h-19" marker-end="url(#m-seq)"/>`;
-    else svg += `<line class="seq-arrow" x1="${x1}" y1="${y}" x2="${x2 + (x2 > x1 ? -7 : 7)}" y2="${y}" marker-end="url(#m-seq)"/>`;
-    const lx = x1 === x2 ? x1 + 30 : Math.min(x1, x2) + 8, anchor = 'start';
-    svg += `<text class="seq-label" x="${lx}" y="${y - 3}" text-anchor="${anchor}">${esc(text)}</text><text class="seq-n" x="${W - 8}" y="${y + 4}" text-anchor="end">${i + 1}</text></g>`;
+  if (!tr){ $('seqBox').innerHTML = '<p class="hint">This plan has no scenarios. A scenario is the story of one run, one step per line.</p>'; return; }
+  // columns: groups in first-appearance order; an open group becomes one column per function it runs
+  const groups = [];
+  tr.steps.forEach(st => { const g = groupOf(st); let G = groups.find(x => x.name === g); if (!G){ G = { name:g, fns:[] }; groups.push(G); } const f = st.fnId ? topFn(st.fnId) : '?'; if (!G.fns.includes(f)) G.fns.push(f); });
+  const cols = []; groups.forEach(G => { if (seqOpen(G.name)) G.fns.forEach(f => cols.push({ id:'f:' + f, name:f === '?' ? 'not found' : plan.byId.get(f).name, group:G })); else cols.push({ id:'g:' + G.name, name:G.name, group:G }); });
+  const CW = Math.max(112, Math.min(176, Math.floor(1000 / Math.max(1, cols.length)))), X0 = 10, HEAD = plan.graph.named ? 48 : 30, Y0 = HEAD + 22, RH = 26;
+  const rows = seqRows(tr), W = X0 * 2 + cols.length * CW, H = Y0 + rows.length * RH + 10;
+  const cx = id => { const i = cols.findIndex(c => c.id === id); return X0 + (i < 0 ? 0 : i) * CW + CW / 2; };
+  let svg = `<svg class="seq" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="The scenario as a sequence across ${plan.graph.named ? 'groups' : 'functions'}">
+    <defs><marker id="m-seq" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path class="seq-tip" d="M0,0 L8,4 L0,8 z"/></marker></defs>`;
+  if (plan.graph.named) groups.forEach(G => {
+    const mine = cols.filter(c => c.group === G), x = X0 + cols.indexOf(mine[0]) * CW, w = mine.length * CW;
+    svg += `<g class="seq-group ${seqOpen(G.name) ? 'is-open' : ''}" data-seqgroup="${esc(G.name)}" tabindex="0" role="button" aria-expanded="${seqOpen(G.name)}" aria-label="${esc(G.name)}: ${seqOpen(G.name) ? 'collapse to one lifeline' : 'expand into its functions'}">
+      <rect class="seq-ghead" x="${x + 4}" y="4" width="${w - 8}" height="22" rx="4"/><text class="seq-gname" x="${x + w / 2}" y="19" text-anchor="middle">${esc(clip((seqOpen(G.name) ? '▾ ' : '▸ ') + G.name, Math.floor((w - 16) / 7)))}</text></g>`;
   });
-  svg += `<defs><marker id="m-seq" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path class="seq-tip" d="M0,0 L8,4 L0,8 z"/></marker></defs></svg>`;
-  const cards = tr.steps.map((st, i) => {
-    const f = st.fnId ? plan.byId.get(st.fnId) : null, l = stepLine(st), k = `step:${tr.name}#${i}`;
-    const cls = `stop ${i === state.step ? 'is-now' : i < state.step ? 'is-done' : ''} ${st.bad ? 'is-bad' : ''}`;
-    let code = '';
-    if (f && l && l.at && f.anchor && CODE[f.id]){
-      const rows = CODE[f.id].filter(r => r.kind !== 'del' && r.n >= l.at.start && r.n <= l.at.end);
-      if (rows.length) code = `<div class="codeview" data-fn="${esc(f.id)}"><div class="cv-head">${esc(f.anchor.path)}:${l.at.start === l.at.end ? l.at.start : l.at.start + '-' + l.at.end}</div>${rows.map(r =>
-        `<div class="cl ${r.kind}" data-n="${r.n}"><button class="cn" data-nk="${esc(`code:${f.anchor.path}:${r.n}`)}" data-nl="${esc(f.anchor.path + ' line ' + r.n)}" title="Add a note on this line of code">${r.n}</button><span class="sign">${r.kind === 'add' ? '+' : ''}</span><code>${esc(r.text)}</code></div>`).join('')}</div>`;
-    } else if (f && f.anchor && !l) code = '';
-    const where = f ? `<span class="fn-sig">${esc(f.name)}</span>${named ? `<span class="word w-same">${esc(laneOfFn(f.id) || 'no group')}</span>` : ''}${f.parent ? `<span class="word w-same">inside ${esc(plan.byId.get(topFn(f.id)).name)}</span>` : ''}` : `<span class="fn-sig">${esc(st.ref)}</span><span class="word w-rev">not found</span>`;
-    return `<article class="${cls}" data-step="${i}" tabindex="0">
-      <div class="stop-head"><span class="stop-n">${i + 1}</span>${where}<span class="row-end">${plan.clock[state.trace].timed ? `<span class="clock">${fmtClock(plan.clock[state.trace].at[i])}</span>` : ''}${noteBtn(k, `scenario "${tr.name}", step ${i + 1} (${stepLabel(st)})`)}</span></div>
-      <div class="stop-line">${l ? lineHtml(f, l) + l.tags.map((t, j) => `<span class="tag tag-${t}">${esc(l.chips[j])}</span>`).join('') : `<span class="w-rev">no line matches "${esc(st.frag)}"</span>`}</div>
-      ${st.note ? `<div class="stop-note ${st.bad ? 'is-bad' : ''}">${esc(st.note)}</div>` : '<div class="stop-note is-empty">No state written for this step</div>'}
-      ${code}${noteHost(k)}</article>`;
-  }).join('');
-  $('story').innerHTML = `<div class="seq-scroll">${svg}</div><div class="stops">${cards}</div>`;
+  cols.forEach((c, i) => { const x = X0 + i * CW, isFn = c.id.startsWith('f:');
+    if (isFn || !plan.graph.named) svg += `<rect class="seq-head" x="${x + 6}" y="${HEAD - 22}" width="${CW - 12}" height="20" rx="3"/><text class="seq-name ${isFn ? 'is-fn' : ''}" x="${x + CW / 2}" y="${HEAD - 8}" text-anchor="middle">${esc(clip(c.name, Math.floor((CW - 18) / 7)))}</text>`;
+    svg += `<line class="seq-life" x1="${x + CW / 2}" y1="${HEAD}" x2="${x + CW / 2}" y2="${H - 4}"/>`; });
+  rows.forEach((row, r) => {
+    const y = Y0 + r * RH, st = tr.steps[row.from], prev = row.from ? tr.steps[row.from - 1] : st;
+    const x1 = cx(seqCol(prev)), x2 = cx(seqCol(st)), now = state.step >= row.from && state.step <= row.to;
+    const cls = `seq-step ${now ? 'is-now' : row.to < state.step ? 'is-done' : ''} ${row.bad ? 'is-bad' : ''}`;
+    svg += `<g class="${cls}" data-step="${row.from}" tabindex="0" role="button" aria-label="Step ${row.from + 1}${row.to > row.from ? ' to ' + (row.to + 1) : ''}: ${esc(rowLabel(tr, row))}"><rect class="seq-row" x="2" y="${y - 13}" width="${W - 4}" height="${RH}" rx="3"/>`;
+    if (x1 === x2) svg += `<path class="seq-arrow" d="M${x1},${y - 5} h20 v9 h-17" marker-end="url(#m-seq)"/>`;
+    else svg += `<line class="seq-arrow" x1="${x1}" y1="${y}" x2="${x2 + (x2 > x1 ? -7 : 7)}" y2="${y}" marker-end="url(#m-seq)"/>`;
+    const lx = x1 === x2 ? x1 + 28 : Math.min(x1, x2) + 8, room = Math.floor((W - lx - 52) / 7);
+    svg += `<text class="seq-label" x="${lx}" y="${y - 4}">${esc(clip(rowLabel(tr, row), room))}</text><text class="seq-n" x="${W - 6}" y="${y + 4}" text-anchor="end">${row.from + 1}${row.to > row.from ? '–' + (row.to + 1) : ''}</text></g>`;
+  });
+  $('seqBox').innerHTML = svg + '</svg>';
 }
-function revealStop(){
-  const el = $('story').querySelector('.stop.is-now'); if (!el) return;
-  const r = el.getBoundingClientRect(), bar = $('walkBar').hidden ? window.innerHeight : $('walkBar').getBoundingClientRect().top;
-  let box = el.parentElement;
-  while (box && box !== document.body){ const cs = getComputedStyle(box); if (/(auto|scroll)/.test(cs.overflowY) && box.scrollHeight > box.clientHeight + 4) break; box = box.parentElement; }
-  if (box && box !== document.body){ const b = box.getBoundingClientRect(), top = Math.max(b.top, 0), bottom = Math.min(b.bottom, bar);
-    if (r.top < top + 8 || r.bottom > bottom - 8) box.scrollTop += r.top - top - 60; }
-  else if (r.top < 8 || r.bottom > bar - 8) window.scrollBy(0, r.top - 60);
+function revealRow(){
+  const box = $('seqBox'), row = box.querySelector('.seq-step.is-now'); if (!row) return;
+  const r = row.getBoundingClientRect(), b = box.getBoundingClientRect();
+  box.scrollTop += r.top - b.top - b.height / 3;
+  if (r.left < b.left || r.right > b.right) box.scrollLeft += r.left - b.left - 20;
+}
+
+/* ----- this step: the sentence, the real code, and what the line touches ----- */
+const KEYWORDS = new Set('def class return if else elif for while import from as try except finally with lambda yield async await pass raise in not and or is None True False self function const let var new this typeof instanceof interface type export default switch case break continue throw catch struct enum fn impl pub match go func package nil true false null void int string bool float double static public private protected final override abstract extends implements super do until unless end begin module require then when where let mut ref use crate mod trait dyn where loop'.split(' '));
+function hl(text, path){
+  const ext = (path || '').split('.').pop().toLowerCase(), hash = ['py','rb','sh','bash','zsh','yaml','yml','toml','r','pl','ps1','nix','ex','exs'].includes(ext);
+  const re = hash ? /(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d[\w.]*\b)|(\b[A-Za-z_]\w*\b)/g : /(\/\/.*$|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\b\d[\w.]*\b)|(\b[A-Za-z_$]\w*\b)/g;
+  let out = '', pos = 0, m;
+  while ((m = re.exec(text))){
+    out += esc(text.slice(pos, m.index));
+    if (m[1]) out += `<span class="h-c">${esc(m[1])}</span>`; else if (m[2]) out += `<span class="h-s">${esc(m[2])}</span>`; else if (m[3]) out += `<span class="h-n">${esc(m[3])}</span>`;
+    else out += KEYWORDS.has(m[4]) ? `<span class="h-k">${esc(m[4])}</span>` : esc(m[4]);
+    pos = m.index + m[0].length;
+  }
+  return out + esc(text.slice(pos));
+}
+function codeFull(f, at){
+  if (!f.anchor) return '';
+  const a = f.anchor, rows = CODE[f.id];
+  if (!rows) return `<div class="codeview"><div class="cv-head">${esc(a.path)}:${a.start}-${a.end}, code not available here</div></div>`;
+  return `<div class="codeview is-full" data-fn="${esc(f.id)}"><div class="cv-head">${esc(a.path)}:${a.start}-${a.end}${at ? `, this step is ${at.start === at.end ? 'line ' + at.start : 'lines ' + at.start + '-' + at.end}` : ''}</div>${rows.map(r => {
+    if (r.kind === 'del') return `<div class="cl del"><span class="cn"></span><span class="sign">−</span><code>${hl(r.text, a.path)}</code></div>`;
+    const key = `code:${a.path}:${r.n}`, live = at && r.n >= at.start && r.n <= at.end;
+    return `<div class="cl ${r.kind} ${live ? 'is-live' : ''}" data-n="${r.n}"><button class="cn" data-nk="${esc(key)}" data-nl="${esc(a.path + ' line ' + r.n)}" title="Add a note on this line of code">${r.n}</button><span class="sign">${r.kind === 'add' ? '+' : ''}</span><code>${hl(r.text, a.path)}</code></div>${state.notes[key] ? noteHost(key) : ''}`;
+  }).join('')}</div>`;
+}
+function renderStep(){
+  const box = $('step'); if (box.hidden) return;
+  const tr = plan.traces[state.trace];
+  if (!tr){ box.innerHTML = '<p class="hint">This plan has no scenarios.</p>'; return; }
+  const cur = currentStep();
+  if (!cur){
+    box.innerHTML = `<div class="step-intro"><h3>${esc(tr.name)}</h3><p class="hint">${tr.steps.length} steps. Press Next, or click a row of the sequence, and this panel shows the sentence for that step, the real code that does it, and whatever the line touches.</p>
+      <ol class="step-list">${tr.steps.map((st, i) => `<li><button class="jump" data-step="${i}">${esc(stepLabel(st))}</button>${st.note ? `<span class="hint"> ${esc(st.note)}</span>` : ''}</li>`).join('')}</ol></div>`;
+    return;
+  }
+  const i = state.step, f = cur.fnId ? plan.byId.get(cur.fnId) : null, l = stepLine(cur), k = `step:${tr.name}#${i}`;
+  let touches = '';
+  if (l){
+    if (l.msg){ const c = plan.chanById.get(l.msg.chan); if (c) touches += `<section class="touch"><h4>Contract <button class="chan-ref" data-chan="${esc(c.id)}">${esc(c.id)}</button></h4>${chanBody(c)}</section>`; }
+    const seen = new Set();
+    plan.types.forEach(T => { if (new RegExp('\\b' + T.name.replace(/[$]/g,'\\$&') + '\\b').test(l.text) && !seen.has(T.name)){ seen.add(T.name); touches += `<section class="touch"><h4>Data shape ${esc(T.name)}</h4>${shapeBody(T)}</section>`; } });
+    if (l.res.length) touches += `<section class="touch"><h4>Resources</h4><p>${l.res.map(r => `<span class="tag tag-${r.kind}">${esc(r.kind + ': ' + r.name)}</span>`).join(' ')}</p></section>`;
+  }
+  const open = f ? openDecisions(f) : 0;
+  box.innerHTML = `<div class="step-head"><span class="stop-n">${i + 1} of ${tr.steps.length}</span>${f ? `<span class="fn-sig">${typeRefs(f.sig)}</span><span class="word w-${f.status}">${STATUS_WORD[f.status]}</span>${plan.graph.named ? `<span class="word w-same">${esc(laneOfFn(f.id) || 'no group')}</span>` : ''}${f.parent ? `<span class="word w-same">inside ${esc(plan.byId.get(topFn(f.id)).name)}</span>` : ''}` : `<span class="fn-sig">${esc(cur.ref)}</span><span class="word w-rev">not found in the plan</span>`}
+      <span class="row-end">${plan.clock[state.trace].timed ? `<span class="clock">${fmtClock(plan.clock[state.trace].at[i])}</span>` : ''}${noteBtn(k, `scenario "${tr.name}", step ${i + 1} (${stepLabel(cur)})`)}</span></div>
+    <div class="stop-note ${cur.bad ? 'is-bad' : ''} ${cur.note ? '' : 'is-empty'}">${esc(cur.note || 'No state written for this step')}</div>
+    <div class="stop-line">${l ? lineHtml(f, l) + l.tags.map((t, j) => `<span class="tag tag-${t}">${esc(l.chips[j])}</span>`).join('') : `<span class="w-rev">no line matches "${esc(cur.frag)}"</span>`}</div>
+    ${noteHost(k)}
+    ${f ? (f.anchor ? codeFull(f, l && l.at) : `<ol class="lines step-pseudo">${f.lines.map((x, j) => x.kind === 'decision' ? '' : `<li class="line ${j === cur.lineIdx ? 'is-active' : ''} ${j === cur.lineIdx && cur.bad ? 'is-bad' : ''}" style="--lvl:${x.level}">${codeLine(f, x, j, false, null)}</li>`).join('')}</ol>`) : ''}
+    ${touches}
+    ${open ? `<p class="hint"><button class="jump" data-target="${esc(f.id)}">${open} open decision${open > 1 ? 's' : ''} on ${esc(f.name)} in the Plan tab</button></p>` : ''}`;
+}
+function revealStepCode(){
+  const cv = $('step').querySelector('.codeview.is-full'); if (!cv) return;
+  const live = cv.querySelector('.cl.is-live'); if (!live) return;
+  const r = live.getBoundingClientRect(), b = cv.getBoundingClientRect();
+  cv.scrollTop += r.top - b.top - b.height / 3;
+  const col = $('colRight'); if (paneScrolls(col)){ const c = cv.getBoundingClientRect(), cb = col.getBoundingClientRect(); if (c.top < cb.top || c.top > cb.bottom - 120) col.scrollTop += c.top - cb.top - 140; }
 }
 function renderTraceSeg(){
   $('traceSeg').innerHTML = plan.traces.map((t, i) =>
@@ -1183,7 +1259,7 @@ function unfold(id){
   while (f){ state.foldedFns.delete(f.id); state.foldedFiles.delete(f.file.path); f = f.parent ? plan.byId.get(f.parent) : null; }
 }
 function applyState(){
-  renderGraph(); renderStory(); renderMachines(); renderTrace(); renderTimeline(); renderStats(); syncFolds();
+  renderGraph(); renderSeq(); renderStep(); renderMachines(); renderTrace(); renderTimeline(); renderStats(); syncFolds();
   if (state.tab === 'log') renderLog();
   $('doc').dataset.view = state.view;
   $('doc').querySelectorAll('[data-view-pick]').forEach(b => b.setAttribute('aria-pressed', b.dataset.viewPick === state.view));
@@ -1260,10 +1336,11 @@ function showFn(id, lineIdx){
 }
 function setTab(t){
   state.tab = t;
-  $('tabPlan').setAttribute('aria-selected', t === 'plan');
+  $('tabStep').setAttribute('aria-selected', t === 'step'); $('tabPlan').setAttribute('aria-selected', t === 'plan');
   $('tabSource').setAttribute('aria-selected', t === 'source'); $('tabLog').setAttribute('aria-selected', t === 'log');
-  $('doc').hidden = t !== 'plan'; $('source').hidden = t !== 'source'; $('log').hidden = t !== 'log';
+  $('step').hidden = t !== 'step'; $('doc').hidden = t !== 'plan'; $('source').hidden = t !== 'source'; $('log').hidden = t !== 'log';
   if (t === 'log') renderLog();
+  if (t === 'step') renderStep();
   $('lenses').style.visibility = t === 'plan' ? 'visible' : 'hidden';
 }
 function revealNode(){
@@ -1287,9 +1364,18 @@ function goStep(i){
   state.step = Math.max(-1, Math.min(tr.steps.length - 1, i));
   const cur = currentStep();
   if (cur && cur.fnId){ state.sel = cur.fnId; unfold(cur.fnId); }
-  if (state.tab !== 'plan') setTab('plan');
+  if (state.tab === 'log' || state.tab === 'source') setTab('step');
   applyState();
-  if (state.gview === 'story') revealStop(); else revealNode();
+  if (state.gview === 'seq') revealRow(); else revealNode();
+  revealStepCode();
+}
+function stepBy(dir){
+  const tr = plan.traces[state.trace]; if (!tr) return;
+  if (state.step < 0) return goStep(dir > 0 ? 0 : -1);
+  const rows = seqRows(tr), r = rows.findIndex(x => state.step >= x.from && state.step <= x.to);
+  if (dir > 0) return goStep(r + 1 < rows.length ? rows[r + 1].from : tr.steps.length);
+  if (state.step > rows[r].from) return goStep(rows[r].from);
+  goStep(r > 0 ? rows[r - 1].from : -1);
 }
 
 /* ----- review text ----- */
@@ -1443,20 +1529,31 @@ $('traceSeg').addEventListener('click', e => {
   const b = e.target.closest('[data-trace]'); if (!b) return;
   state.trace = +b.dataset.trace; state.step = -1; renderTraceSeg(); applyState();
 });
-$('viewSeg').addEventListener('click', e => { const b = e.target.closest('[data-gview]'); if (!b) return; state.gview = b.dataset.gview; applyState(); if (state.gview === 'story') revealStop(); });
-$('story').addEventListener('click', e => {
-  if (e.target.closest('button, input, textarea, .note-host, .codeview')) return;
-  const b = e.target.closest('[data-step], [data-seq-step]'); if (b) goStep(+(b.dataset.step != null ? b.dataset.step : b.dataset.seqStep));
+$('viewSeg').addEventListener('click', e => { const b = e.target.closest('[data-gview]'); if (!b) return; state.gview = b.dataset.gview; applyState(); if (state.gview === 'seq') revealRow(); });
+$('seqTools').addEventListener('click', e => {
+  const b = e.target.closest('[data-seq]'); if (!b) return;
+  if (b.dataset.seq === 'open') plan.graph.lanes.forEach(L => state.seqOpen.add(L.name || 'no group'));
+  else if (b.dataset.seq === 'close') state.seqOpen.clear();
+  else state.seqLines = !state.seqLines;
+  applyState(); revealRow();
 });
-$('story').addEventListener('keydown', e => { if (e.key !== 'Enter' && e.key !== ' ') return; const b = e.target.closest('[data-step], [data-seq-step]'); if (b){ e.preventDefault(); goStep(+(b.dataset.step != null ? b.dataset.step : b.dataset.seqStep)); } });
+const seqAct = e => {
+  const g = e.target.closest('[data-seqgroup]');
+  if (g){ const name = g.dataset.seqgroup; if (state.seqOpen.has(name)) state.seqOpen.delete(name); else state.seqOpen.add(name); applyState(); revealRow(); return; }
+  const r = e.target.closest('[data-step]'); if (r) goStep(+r.dataset.step);
+};
+$('seqBox').addEventListener('click', seqAct);
+$('seqBox').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); seqAct(e); } });
+$('step').addEventListener('click', e => { const b = e.target.closest('[data-step]'); if (b) goStep(+b.dataset.step); });
+$('tabStep').addEventListener('click', () => { state.tabPicked = true; setTab('step'); });
 $('walkTrace').addEventListener('change', e => { state.trace = +e.target.value; state.step = -1; renderTraceSeg(); applyState(); });
-$('prevBtn').addEventListener('click', () => goStep(state.step - 1));
-$('nextBtn').addEventListener('click', () => goStep(state.step + 1));
+$('prevBtn').addEventListener('click', () => stepBy(-1));
+$('nextBtn').addEventListener('click', () => stepBy(1));
 $('steps').addEventListener('click', e => { const b = e.target.closest('[data-step]'); if (b) goStep(+b.dataset.step); });
 document.addEventListener('keydown', e => {
   if (e.target.closest('input,textarea,select,dialog')) return;
-  if (e.key === 'ArrowRight'){ e.preventDefault(); goStep(state.step + 1); }
-  if (e.key === 'ArrowLeft'){ e.preventDefault(); goStep(state.step - 1); }
+  if (e.key === 'ArrowRight'){ e.preventDefault(); stepBy(1); }
+  if (e.key === 'ArrowLeft'){ e.preventDefault(); stepBy(-1); }
 });
 $('checks').addEventListener('click', e => {
   const b = e.target.closest('[data-check]'); if (!b) return;
@@ -1468,7 +1565,7 @@ $('lenses').addEventListener('click', e => {
   const b = e.target.closest('[data-lens]'); if (!b) return;
   const t = b.dataset.lens; state.lens.has(t) ? state.lens.delete(t) : state.lens.add(t); applyState();
 });
-$('tabPlan').addEventListener('click', () => setTab('plan'));
+$('tabPlan').addEventListener('click', () => { state.tabPicked = true; setTab('plan'); });
 $('tabSource').addEventListener('click', () => setTab('source'));
 $('tabLog').addEventListener('click', () => setTab('log'));
 
