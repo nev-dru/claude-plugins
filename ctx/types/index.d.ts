@@ -1,6 +1,6 @@
 declare module 'claude-code' {
   interface PluginState {
-    context: {
+    ctx: {
       pointers: number
       lookups: number
       shown: string

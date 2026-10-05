@@ -62,7 +62,7 @@ test('ctx lookups in Bash commands are counted', async ($, on) => {
   await $.tool.call({ tool: 'Bash', command: 'ctx search "python version"' })
   await $.tool.call({ tool: 'Bash', command: 'ls' })
   await $.tool.call({ tool: 'Read', file_path: 'README.md' })
-  const ui = await $.ui.mount({ plugin: 'context', component: 'Pane', requestId: 'ctx', surface: 'terminal',
+  const ui = await $.ui.mount({ plugin: 'ctx', component: 'Pane', requestId: 'ctx', surface: 'terminal',
     viewport: { columns: 100, rows: 30 },
     props: { title: 'ctx', isFocused: true, bodyColumns: 60, placement: 'inline', scroll: { offset: 0, bodyRows: 10 }, view: {} } })
   expect(await ui.find({ type: 'Text', text: /ctx lookups: 1/ })).toBeDefined()

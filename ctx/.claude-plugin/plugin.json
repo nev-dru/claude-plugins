@@ -1,6 +1,6 @@
 {
-  "name": "context",
-  "version": "0.1.2",
+  "name": "ctx",
+  "version": "0.2.0",
   "description": "Team context: search reviewed knowledge entries, promote lessons, and see which team context a session used.",
   "author": { "name": "nev-dru" },
   "types": "./types/index.d.ts"

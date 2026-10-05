@@ -1,13 +1,13 @@
 import { atom, read, update } from 'claude-code'
 
 // Session counters shown in the band and the /ctx pane. Declared in types/index.d.ts.
-const pointers = atom({ plugin: 'context', key: 'pointers' }, 0)
-const lookups = atom({ plugin: 'context', key: 'lookups' }, 0)
-const shown = atom({ plugin: 'context', key: 'shown' }, '')
-const index = atom({ plugin: 'context', key: 'index' }, '?')
-const compacted = atom({ plugin: 'context', key: 'compacted' }, false)
-const last = atom({ plugin: 'context', key: 'last' }, '')
-const cwd = atom({ plugin: 'context', key: 'cwd' }, '')
+const pointers = atom({ plugin: 'ctx', key: 'pointers' }, 0)
+const lookups = atom({ plugin: 'ctx', key: 'lookups' }, 0)
+const shown = atom({ plugin: 'ctx', key: 'shown' }, '')
+const index = atom({ plugin: 'ctx', key: 'index' }, '?')
+const compacted = atom({ plugin: 'ctx', key: 'compacted' }, false)
+const last = atom({ plugin: 'ctx', key: 'last' }, '')
+const cwd = atom({ plugin: 'ctx', key: 'cwd' }, '')
 
 // Deterministic signals in a prompt: a file path, a Jira key, a stack trace.
 const PATH_RE = /(?:^|[\s"'`(\[])((?:\.{0,2}\/)?[\w.-]+(?:\/[\w.-]+)+\.[A-Za-z0-9]+)/g

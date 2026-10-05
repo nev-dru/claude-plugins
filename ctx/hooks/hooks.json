@@ -1,0 +1,4 @@
+{
+  "description": "ctx mod: route pointers, source hints, band and /ctx",
+  "modules": ["./register.js"]
+}

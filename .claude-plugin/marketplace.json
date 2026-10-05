@@ -18,8 +18,8 @@
       "description": "Plan code changes as reviewable pseudocode, reviewed by a human in the browser before any code is written; or map an existing diff into the same review page."
     },
     {
-      "name": "context",
-      "source": "./context",
+      "name": "ctx",
+      "source": "./ctx",
       "description": "Team context: search reviewed knowledge and promote lessons."
     }
   ]
