@@ -358,8 +358,8 @@ test('the session pointer lists the other sources available on this machine', as
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await $.prompt.submit({ text: 'hello' })
   const ctx = (seen[0].context ?? []).join('\n')
-  expect(ctx).toMatch(/Other sources: claude-docs \(personal\) — Claude Code and Anthropic docs \(local vex index\)\./)
-  expect(ctx).toMatch(/jira \(team\) — Work tracking\./)
+  expect(ctx).toMatch(/claude-docs \(personal\) — Claude Code and Anthropic docs \(local vex index\)\. Use for how Claude Code works;/)
+  expect(ctx).toMatch(/jira \(team\) — Work tracking\. Run `ctx howto/)
   expect(ctx).toMatch(/ctx howto <name>/)
 })
 

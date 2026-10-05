@@ -43,9 +43,10 @@ function pathsIn(text, root) {
 function otherSourcesLine(h) {
   const list = Array.isArray(h.sources) ? h.sources.filter((x) => x && x.name) : []
   if (list.length === 0) return ''
-  const first = (d) => String(d ?? '').split(/(?<=\.)\s/)[0]
-  return ' Other sources: ' + list.map((x) => x.name + ' (' + x.tier + ') — ' + first(x.description)).join('; ') +
-    '. Run `ctx howto <name>` for how to query one; query it directly.'
+  const desc = (d) => String(d ?? '').trim().replace(/\.$/, '')
+  return ' Other sources (when the hub has nothing, pick by what each covers): ' +
+    list.map((x) => x.name + ' (' + x.tier + ') — ' + desc(x.description)).join('; ') +
+    '. Run `ctx howto <name>` for how to query one, then query it directly.'
 }
 
 // Which declared source a Bash command queries: its binary appears as a word and, when several sources
