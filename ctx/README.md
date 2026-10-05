@@ -6,6 +6,26 @@ A plugin (skills + a mod) over the `ctx` CLI and a team knowledge hub. It puts t
 
 Installing the plugin is enough; no AGENTS.md line is needed. On the first prompt of every session (and again after a compaction) the mod adds one line to the model's context: `Team knowledge hub (ctx): 15 active entries — rufalo 7, agents 2, … Before answering about conventions, decisions, setup, project instructions or "our context", run ctx search … (or ctx list)`. It is built from `ctx status`, so it stays current as the hub grows, and costs about 60 tokens per session. Later prompts that ask about the hub, conventions, decisions or "how do we …" get a one-line search hint.
 
+## Other sources (L5)
+
+ctx describes other sources but never wraps them; the model queries each tool directly after `ctx howto <name>`.
+
+- **Team sources** live in the hub's `sources.yaml` (Jira, Confluence, Koi). Each names the binary it `requires`; a source whose binary is not installed is hidden on that machine.
+- **Personal sources** live in `~/.config/ctx/sources.yaml` with howtos in `~/.config/ctx/howto/` — local indexes, notes, code graphs. They are never published. A team entry of the same name always wins.
+- The session pointer lists every source available on this machine; `ctx sources` shows all of them, installed or not.
+- When a Bash command queries a source (its binary, plus `match:` text when several sources share one), the feed shows it and `ctx report` counts it under `sources`.
+
+Example personal entry:
+
+```yaml
+claude-docs:
+  description: Claude Code and Anthropic docs (local vex index). Use for how Claude Code works.
+  kind: index
+  requires: vex
+  match: anthropic-sdlc-docs     # text that identifies this source in the command
+  howto: howto/claude-docs.md    # under ~/.config/ctx
+```
+
 ## What you see
 
 **Band** (one line above the prompt): `ctx · pointers 3 · used 1 · feed 12 · index a002757` — pointers injected this session, entries fetched, feed events, the installed index build. `· compacted` appears after a compaction; `· lessons? /ctx:promote` appears once a session has five of your turns and at least one lookup or pointer.

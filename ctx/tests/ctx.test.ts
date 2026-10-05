@@ -335,3 +335,45 @@ test('a question about our context, conventions or instructions adds a search hi
   expect((seen[2].context ?? []).join('\n')).toMatch(/ctx search/)
   expect(seen[3].context ?? []).toEqual([])
 })
+
+// ---- L5 sources ----
+const STATUS_SRC = '{"build_id":"b1","active":15,"scopes":{"rufalo":7},"memory_lines":3,"sources":[' +
+  '{"name":"claude-docs","tier":"personal","description":"Claude Code and Anthropic docs (local vex index). Use for how Claude Code works.","command":"vex","match":"anthropic-sdlc-docs"},' +
+  '{"name":"max-docs","tier":"personal","description":"Max/MSP reference.","command":"vex","match":"vex search"},' +
+  '{"name":"jira","tier":"team","description":"Work tracking.","command":"acli"}]}\n'
+function srcStubs(on, argv) {
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => {
+    argv.push(e.argv)
+    if (e.argv[1] === 'status') return { value: { exitCode: 0, stdout: STATUS_SRC, stderr: '' } }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+}
+
+test('the session pointer lists the other sources available on this machine', async ($, on) => {
+  const argv = [], seen = []
+  srcStubs(on, argv)
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hello' })
+  const ctx = (seen[0].context ?? []).join('\n')
+  expect(ctx).toMatch(/Other sources: claude-docs \(personal\) — Claude Code and Anthropic docs \(local vex index\)\./)
+  expect(ctx).toMatch(/jira \(team\) — Work tracking\./)
+  expect(ctx).toMatch(/ctx howto <name>/)
+})
+
+test('querying a source is recorded as used and shown in the pane', async ($, on) => {
+  const argv = []
+  srcStubs(on, argv)
+  on('tool.call', () => ({ result: '0.91 a1b2 /docs/mods.md:1-20  Mods' }))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Bash', command: "vex --db ~/dev/anthropic-sdlc-docs/.vex.db search 'how do mods render a pane'" })
+  await $.tool.call({ tool: 'Bash', command: "vex search 'cycle~ object'" })
+  await $.tool.call({ tool: 'Bash', command: 'ls vex-notes/' })
+  const used = argv.filter((a) => a[1] === 'feedback').map((a) => a.slice(2, 4).join(' '))
+  expect(used).toEqual(['source:claude-docs used', 'source:max-docs used'])
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /claude-docs 1/ })).toBeDefined()
+  await ui.unmount()
+})

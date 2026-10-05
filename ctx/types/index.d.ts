@@ -16,6 +16,7 @@ declare module 'claude-code' {
       turns: number
       compactions: number
       primed: boolean
+      srcUse: string
     }
   }
 }

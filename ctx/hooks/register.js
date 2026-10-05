@@ -18,6 +18,7 @@ const queries = atom({ plugin: 'ctx', key: 'queries' }, '[]')
 const turns = atom({ plugin: 'ctx', key: 'turns' }, 0)
 const compactions = atom({ plugin: 'ctx', key: 'compactions' }, 0)
 const primed = atom({ plugin: 'ctx', key: 'primed' }, false)
+const srcUse = atom({ plugin: 'ctx', key: 'srcUse' }, '{}')
 
 const FEED_CAP = 40
 const INPLAY_CAP = 60
@@ -36,6 +37,27 @@ function pathsIn(text, root) {
   const out = new Set()
   for (const m of String(text ?? '').matchAll(PATH_RE)) out.add(relative(m[1], root))
   return [...out].slice(0, 20)
+}
+
+// One sentence per available source (team or personal), so the model knows what else it can query.
+function otherSourcesLine(h) {
+  const list = Array.isArray(h.sources) ? h.sources.filter((x) => x && x.name) : []
+  if (list.length === 0) return ''
+  const first = (d) => String(d ?? '').split(/(?<=\.)\s/)[0]
+  return ' Other sources: ' + list.map((x) => x.name + ' (' + x.tier + ') — ' + first(x.description)).join('; ') +
+    '. Run `ctx howto <name>` for how to query one; query it directly.'
+}
+
+// Which declared source a Bash command queries: its binary appears as a word and, when several sources
+// share a binary, its `match` text appears too. Sources with a match are checked first.
+function sourceFor(cmd, h) {
+  const list = Array.isArray(h.sources) ? h.sources.filter((x) => x && x.name && x.command) : []
+  const ordered = [...list.filter((x) => x.match), ...list.filter((x) => !x.match)]
+  for (const x of ordered) {
+    const bin = new RegExp('(^|[\\s/;&|$(])' + x.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\s|$)')
+    if (bin.test(cmd) && (!x.match || cmd.includes(x.match))) return x.name
+  }
+  return null
 }
 
 function relative(p, root) {
@@ -131,7 +153,8 @@ export function register(on) {
         const scopes = Object.entries(h.scopes ?? {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => k + ' ' + n).join(', ')
         extra.push('Team knowledge hub (ctx): ' + h.active + ' active entries — ' + scopes + '. ' +
           'Reviewed decisions, conventions, gotchas and runbooks live there, not in this repo. ' +
-          'Before answering about conventions, decisions, setup, project instructions or "our context", run `ctx search "<question>"` (or `ctx list` to see everything), then `ctx get <ID>`.')
+          'Before answering about conventions, decisions, setup, project instructions or "our context", run `ctx search "<question>"` (or `ctx list` to see everything), then `ctx get <ID>`.' +
+          otherSourcesLine(h))
         await update($, primed, () => true)
         await pushFeed($, 'pointer', 'hub pointer injected (' + h.active + ' entries)')
       }
@@ -214,6 +237,22 @@ export function register(on) {
       await writeInplay($, inp)
       $.ui.invalidate('ui.render')
       return result
+    }
+    if (tool === 'Bash' && !isReadOnlyProbe(cmd)) {
+      const src = sourceFor(cmd, parseJSON(await read($, health), {}))
+      if (src) {
+        await update($, srcUse, (v) => {
+          const m = parseJSON(v, {})
+          m[src] = (m[src] ?? 0) + 1
+          return JSON.stringify(m)
+        })
+        await pushFeed($, 'source', 'source ' + src + ' ← ' + cmd.slice(0, 60))
+        try {
+          await $.process.run([CTX, 'feedback', 'source:' + src, 'used', '--note', cmd.slice(0, 160)])
+        } catch {}
+        $.ui.invalidate('ui.render')
+        return next(e)
+      }
     }
     if (tool === 'Read' || tool === 'Grep' || tool === 'Glob') {
       const root = await read($, cwd)
@@ -332,6 +371,7 @@ export function register(on) {
     const h = parseJSON(await read($, health), {})
     const i = await read($, index)
     const nComp = await read($, compactions)
+    const su = parseJSON(await read($, srcUse), {})
     // wrap: 'truncate' clips to the pane width at draw time; the full text stays in the element.
     const line = (s) => Text({ wrap: 'truncate', children: [String(s)] })
     const dim = (s) => Text({ dimColor: true, wrap: 'truncate', children: [String(s)] })
@@ -356,6 +396,9 @@ export function register(on) {
           line('MEMORY.md ' + (h.memory_lines ?? '?') + '/60 lines'),
           line('index ' + String(i).slice(0, 7) + ' · ' + (h.index_age_days ?? '?') + ' d old · ' + (h.doc_count ?? '?') + ' entries'),
           line('review due ' + (h.review_due ?? 0) + (nComp ? ' · compacted ×' + nComp : '')),
+          line('sources ' + (Array.isArray(h.sources) && h.sources.length
+            ? h.sources.filter((x) => x && x.name).map((x) => x.name + ' ' + (su[x.name] ?? 0)).join(' · ')
+            : 'none declared')),
         ]
 
     return Box({
