@@ -1,9 +1,5 @@
 // Pure helpers for the ctx mod's usage signals. No Claude Code API here, so they test in isolation.
 const CARD_RE = /^\[([0-9A-HJKMNP-TV-Z]{26})\] (.+?)(?:  \(|$)/gm
-const STOP = new Set(['function', 'variable', 'default', 'example', 'command', 'install', 'because', 'should', 'returns',
-  'require', 'requires', 'running', 'setting', 'settings', 'version', 'project', 'package', 'support', 'supports',
-  'through', 'without', 'between', 'instead', 'contents', 'section', 'summary', 'entries', 'entry', 'always', 'never',
-  'otherwise', 'whenever', 'something', 'anything', 'everything', 'following', 'different', 'possible', 'available'])
 
 // Cards as `ctx search` / `ctx get` print them: `[ULID] title  (kind · scope · date)`.
 export function parseCards(text) {
@@ -12,17 +8,17 @@ export function parseCards(text) {
   return out
 }
 
-// Terms worth matching later: identifiers, paths, env vars, flags, CamelCase, digits, or long uncommon words.
+// Terms worth matching later: identifier-shaped tokens only — paths, env vars, flags, snake_case,
+// kebab-case, CamelCase, or names carrying a digit. Ordinary words of any length never count as
+// evidence that an entry was applied, and every term must contain a letter.
 export function distinctiveTerms(text) {
   const seen = new Set()
   for (const raw of String(text ?? '').split(/[\s,;:()\[\]{}"'`<>]+/)) {
-    const t = raw.replace(/^[.\-/]+|[.\-/]+$/g, '')
-    if (t.length < 3 || seen.has(t)) continue
+    const t = raw.replace(/^[.\-/<>=]+|[.\-/]+$/g, '')
+    if (t.length < 3 || seen.has(t) || !/[A-Za-z]/.test(t)) continue
     if (/^[0-9A-HJKMNP-TV-Z]{26}$/.test(t)) continue // entry ids are not evidence of reuse
-    const lower = t.toLowerCase()
     const shaped = /[_\-./]/.test(t) || /\d/.test(t) || /[a-z][A-Z]/.test(t)
-    const long = /^[A-Za-z]{8,}$/.test(t) && !STOP.has(lower)
-    if (shaped || long) seen.add(t)
+    if (shaped) seen.add(t)
     if (seen.size >= 40) break
   }
   return [...seen]

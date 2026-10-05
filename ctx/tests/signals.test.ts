@@ -18,6 +18,13 @@ test('distinctiveTerms keeps identifiers and drops common words', async () => {
   expect(terms).not.toContain('default')
   expect(terms).not.toContain('version')
   expect(terms).not.toContain('requires')
+  // numbers and ordinary long words are not evidence that an entry was applied
+  const weak = distinctiveTerms('Python >=3.12,<3.13 is the workspace standard; supported features are documented.')
+  expect(weak).not.toContain('3.12')
+  expect(weak).not.toContain('>=3.12')
+  expect(weak).not.toContain('workspace')
+  expect(weak).not.toContain('supported')
+  expect(weak).not.toContain('documented')
 })
 
 test('findReuse matches a term on a word boundary only', async () => {
