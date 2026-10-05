@@ -11,5 +11,6 @@ Run searches with the `ctx` command (on PATH). It returns cards: `[ID] title (ki
 3. Open the best card: `ctx get <ID>` (card, summary, section names). Read a section only if the summary cites the answer: `ctx get <ID> --section <name>`. Use `--full` only when the whole entry is needed.
 4. A card marked superseded names its replacement; use that ID. A card marked disputed is contested: say so when you rely on it.
 5. For sources other than the hub (Jira, Koi, Confluence): `ctx sources`, then `ctx howto <source>` for that tool's syntax; call that tool directly.
+5b. Cards labelled `personal` come from this machine only: personal entries, the project map (where each repo lives here, with pointers to its Claude memory files) and Claude memory files from any project. Read one with `ctx get <ID or path>`. They are unreviewed; prefer a team entry when both answer.
 6. Stop after three searches. Say what was not found; do not invent an entry.
 7. If an entry told you something that proved false in this session (a command failed, a path did not exist, a value was wrong), record it with the evidence: `ctx feedback <ID> wrong --note "<what happened>"`. Do not record "useful"; usefulness is measured from what you do with the entry.

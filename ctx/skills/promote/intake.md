@@ -9,7 +9,11 @@ Read this before routing any lesson, note, decision or fact. Every piece of cont
 | 1 | Is it about the task in progress — a plan, a TODO, what was tried, what is left? | **L7 working state** | Plan file, TODO list, MR/PR description, the ticket. Nothing in ctx. |
 | 2 | Must it *always* or *never* happen, and can a tool enforce it? ("never push to main", "never read .env") | **Enforcement** | Permission deny rule or hook in `.claude/settings.json`; L1 gets at most a one-line pointer to it. |
 | 3 | Is it a secret, a credential, customer data, or restricted information? | **Reject** | Nowhere. Say so. |
-| 4 | Is it only useful to one person — a preference, a habit, a local path, how they like answers? | **L6 personal memory** | `~/.claude/projects/<repo>/memory/` (one fact per file, one index line in MEMORY.md). |
+| 4 | Is it about **one person** (the user), not the team? Then pick the personal home: | | |
+| 4a | …an instruction every session should follow, in every project ("answer concisely", "never use emoji")? | **Global CLAUDE.md** | `~/.claude/CLAUDE.md`. Propose the exact line; the user confirms. Keep it short: it loads in every session. |
+| 4b | …an instruction for this repo only, personal (not for teammates)? | **CLAUDE.local.md** | The repo's `CLAUDE.local.md` (git-ignored). Propose the exact line; the user confirms. |
+| 4c | …a fact or preference about the user that matters in many projects but only sometimes (hobbies, schedule, how their manager likes reports, tools they prefer)? | **Personal layer** | `ctx new --local <preference\|fact\|note> "<title>"`, fill the file, then `ctx local refresh --background`. Searched by `ctx search` from every project; never published. |
+| 4d | …something learned while working in this one project (its quirks, the user's habits there)? | **L6 Claude project memory** | Claude Code's own memory for this project (it writes it); the personal layer's project map points other sessions at it. |
 | 5 | Does every session in this repo need it, as one line — an exact command, a repo-wide prohibition, a version warning, a gotcha that bites everyone? | **L1 standing instructions** | `AGENTS.md` (owners approve via MR). Never model-written: propose the line, a human adds it. |
 | 6 | Would it have to change in the same commit as this repo's code — architecture, module layout, where code goes, commands beyond the everyday ones, test or CI setup, this repo's own ADRs? | **Repo reference docs** | `docs/<topic>.md` in the repo, plus one link line in AGENTS.md: `- <topic>: docs/<topic>.md (read when <trigger>)`. |
 | 7 | Does doing it need a script or a tool call, not just knowledge? | **L4 procedure** | A skill (SKILL.md + scripts) in a plugin; humans review via MR. |
@@ -56,6 +60,19 @@ Prefer a second occurrence before promoting anything out of L6 or L7: one-off le
 - **Signals:** the answer already lives in a ticket, a wiki page, an API's docs or an index.
 - **Team or personal:** a tool the team shares → hub `sources.yaml`; an index on one machine → `~/.config/ctx/sources.yaml`. See the hub's `docs/adding-sources.md`.
 
+### Personal instruction files (global CLAUDE.md, CLAUDE.local.md)
+- **Belongs:** instructions, not facts. Global: how the user wants every session to behave, in every project. Local: the same, for one repo, personal.
+- **Signals:** "always", "never", "from now on", "in every project", "in this repo I want".
+- **Not here:** facts about the user (→ personal layer), team rules (→ AGENTS.md or hub), anything a hook can enforce (→ hook).
+- **Budget:** global ≤ ~2k tokens (it loads in every session everywhere); local ≤ ~500 tokens.
+- **Example (global):** `- Lead with the answer; prefer prose over decorative structure.`
+
+### Personal layer (`ctx new --local`)
+- **Belongs:** anything about the user that should follow them across projects but is only needed sometimes: preferences, schedule, hobbies, people they work with and how, tools they like, where their projects are (generated), pointers to each project's Claude memory (generated).
+- **Signals:** "remember that I …", "for future reference", "I usually …", "my manager …".
+- **Not here:** team knowledge (→ hub), secrets (→ nowhere), instructions every session must follow (→ global CLAUDE.md).
+- **Example:** `preference` — "Weekends are for trail running; never schedule anything on Saturday mornings."
+
 ### L6 — Personal memory
 - **Belongs:** how this person works: preferences, corrections they gave, local paths, their projects and deadlines.
 - **Signals:** "I prefer", "for me", "on my laptop", a correction of the assistant's behaviour.
@@ -75,6 +92,17 @@ Prefer a second occurrence before promoting anything out of L6 or L7: one-off le
 | L3 → repo docs | A hub entry turns out to describe one repo's code: move it into that repo's `docs/`, mark the hub entry `deprecated` with a pointer to the file. |
 | repo docs → L3 | A repo fact becomes a team rule other repos follow: write a hub `convention`, link the repo doc as its source. |
 | prose → enforcement | A "never" keeps being broken: turn it into a deny rule or hook, shrink the prose to a pointer. |
+
+## Upkeep of the instruction files
+
+Every session review also reads `~/.claude/CLAUDE.md` and the repo's `CLAUDE.local.md` (and AGENTS.md when it is over budget) and proposes exact diffs for:
+- **duplicates** — the same rule twice, or a rule the other file already states;
+- **contradictions** — two lines that cannot both be followed (keep the newer, ask if unsure);
+- **stale lines** — commands, paths or tools that no longer exist (check before proposing);
+- **misplaced lines** — a fact about the user (→ personal layer), a team rule (→ AGENTS.md or hub), a "never" a hook can enforce (→ hook);
+- **size** — over budget: move detail out and leave one line.
+
+Nothing is changed without the user confirming the exact diff. With `--auto`, proposals go in the PR body only.
 
 ## Ties and edge cases
 - **Both repo and team?** Detail in repo docs; a short hub entry (`reference`) that points to it if other repos must discover it.

@@ -40,6 +40,15 @@ function pathsIn(text, root) {
   return [...out].slice(0, 20)
 }
 
+// The personal layer: this machine only, searched by the same ctx search.
+function personalLine(h) {
+  const p = h.personal_projects ?? 0
+  const n = h.personal_entries ?? 0
+  if (!p && !n) return ''
+  return ' Personal layer on this machine: ' + p + ' projects (with their Claude memory), ' + n + ' personal entries — `ctx search` covers it too, labelled personal; `ctx get <path>` reads a memory file it lists. ' +
+    'To remember something about the user across all projects, run `ctx new --local <preference|fact|note> "<title>"` and fill in the file it prints.'
+}
+
 // One sentence per available source (team or personal), so the model knows what else it can query.
 function otherSourcesLine(h) {
   const list = Array.isArray(h.sources) ? h.sources.filter((x) => x && x.name) : []
@@ -137,6 +146,10 @@ async function refreshIndex($, root, remote) {
     try {
       await $.process.run([CTX, 'sync', '--if-newer', '--no-views'], { timeoutMs: 15000 })
     } catch {}
+    try {
+      // Personal layer (project map, Claude memory, personal entries): detached, returns at once.
+      await $.process.run([CTX, 'local', 'refresh', '--background'], { timeoutMs: 5000 })
+    } catch {}
   }
   let id = ''
   try {
@@ -192,7 +205,7 @@ export function register(on) {
         extra.push('Team knowledge hub (ctx): ' + h.active + ' active entries — ' + scopes + '. ' +
           'Reviewed decisions, conventions, gotchas and runbooks live there, not in this repo. ' +
           'Before answering about conventions, decisions, setup, project instructions or "our context", run `ctx search "<question>"` (or `ctx list` to see everything), then `ctx get <ID>`.' +
-          otherSourcesLine(h))
+          personalLine(h) + otherSourcesLine(h))
         await update($, primed, () => true)
         await pushFeed($, 'pointer', 'hub pointer injected (' + h.active + ' entries)')
       }
@@ -425,11 +438,13 @@ export function register(on) {
         (nComp ? ' · compacted ×' + nComp : '')
     const srcs = Array.isArray(h.sources) ? h.sources.filter((x) => x && x.name) : []
     const strip = [
-      'L1 ' + k(h.l1_tokens),
+      'L1 ' + k(h.l1_tokens) + (h.local_claude_tokens ? ' + local ' + k(h.local_claude_tokens) : ''),
+      'global ' + k(h.global_claude_tokens ?? 0),
       'L2 ' + (h.l2_rules ?? 0) + ' rules',
       'L3 ' + used + ' used/' + found + ' found',
       'L5 ' + (srcs.length ? srcs.map((x) => x.name + ' ' + (su[x.name] ?? 0)).join(' ') : 'none'),
       'L6 MEMORY ' + (h.memory_lines ?? '?') + '/60',
+      'personal ' + (h.personal_projects ?? 0) + ' projects, ' + (h.personal_entries ?? 0) + ' notes',
       'L7 ' + fl.length + (fl.length === 1 ? ' file' : ' files'),
     ].join(' · ')
 
