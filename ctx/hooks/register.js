@@ -19,6 +19,7 @@ const turns = atom({ plugin: 'ctx', key: 'turns' }, 0)
 const compactions = atom({ plugin: 'ctx', key: 'compactions' }, 0)
 const primed = atom({ plugin: 'ctx', key: 'primed' }, false)
 const srcUse = atom({ plugin: 'ctx', key: 'srcUse' }, '{}')
+const lastRemote = atom({ plugin: 'ctx', key: 'lastRemote' }, 0)
 
 const FEED_CAP = 40
 const INPLAY_CAP = 60
@@ -125,24 +126,46 @@ async function recordFeedback($, id, verdict, note) {
   } catch {}
 }
 
+const REMOTE_EVERY_MS = 5 * 60 * 1000
+
+// Keep this session's view of the hub current. remote: ask GitHub for a newer release (throttled) and
+// install it without touching the repo. Always: a ~10 ms local check of the installed index, which also
+// catches syncs and pushes made by other sessions on this machine. Returns the change, if any.
+async function refreshIndex($, root, remote) {
+  if (remote) {
+    await update($, lastRemote, () => Date.now())
+    try {
+      await $.process.run([CTX, 'sync', '--if-newer', '--no-views'], { timeoutMs: 15000 })
+    } catch {}
+  }
+  let id = ''
+  try {
+    const r = await $.process.run([CTX, 'sync', '--check'])
+    const line = r.stdout.trim()
+    id = line.startsWith('index: ') ? line.slice(7) : 'missing'
+  } catch {
+    id = 'no ctx'
+  }
+  const before = String(await read($, index))
+  if (id === before) return null
+  const oldHealth = parseJSON(await read($, health), {})
+  await update($, index, () => id)
+  try {
+    const r = await $.process.run([CTX, 'status', '--json', '--cwd', root])
+    const text = r.stdout.trim()
+    await update($, health, () => (text.startsWith('{') ? text : '{}'))
+  } catch {
+    await update($, health, () => '{"error":"ctx unavailable"}')
+  }
+  const newHealth = parseJSON(await read($, health), {})
+  return { from: before, to: id, was: oldHealth.active, now: newHealth.active }
+}
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     const root = typeof e.cwd === 'string' ? e.cwd.replace(/\/+$/, '') : ''
     await update($, cwd, () => root)
-    try {
-      const r = await $.process.run([CTX, 'sync', '--check'])
-      const line = r.stdout.trim()
-      await update($, index, () => (line.startsWith('index: ') ? line.slice(7) : 'missing'))
-    } catch {
-      await update($, index, () => 'no ctx')
-    }
-    try {
-      const r = await $.process.run([CTX, 'status', '--json', '--cwd', root])
-      const text = r.stdout.trim()
-      await update($, health, () => (text.startsWith('{') ? text : '{}'))
-    } catch {
-      await update($, health, () => '{"error":"ctx unavailable"}')
-    }
+    await refreshIndex($, root, true)
     try {
       await $.command.register({ name: 'ctx', description: 'Live view of the team context this session uses', argumentHint: '[explain|close]' })
     } catch {}
@@ -152,6 +175,14 @@ export function register(on) {
   on('prompt.submit', async ($, e, next) => {
     await update($, turns, (n) => n + 1)
     const extra = []
+    const due = Date.now() - (await read($, lastRemote)) > REMOTE_EVERY_MS
+    const change = await refreshIndex($, await read($, cwd), due)
+    if (change && (await read($, primed))) {
+      const delta = typeof change.now === 'number' && typeof change.was === 'number' ? change.now - change.was : null
+      await pushFeed($, 'sync', 'index ' + change.from.slice(0, 7) + ' → ' + change.to.slice(0, 7) + (delta !== null ? ' (' + (delta >= 0 ? '+' : '') + delta + ' entries)' : ''))
+      extra.push('Team hub updated during this session: ' + (change.now ?? '?') + ' active entries (was ' + (change.was ?? '?') + '). Results from earlier searches may be stale; search again if they mattered.')
+      $.ui.invalidate('ui.render')
+    }
     // Standing pointer, once per session and again after compaction: installing the plugin is all it
     // takes for the model to know the hub exists and when to search it (no AGENTS.md line needed).
     if (!(await read($, primed))) {

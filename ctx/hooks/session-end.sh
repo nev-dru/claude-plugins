@@ -24,14 +24,15 @@ lookups=$(grep -c -E '"command": *"ctx (search|get) ' "$transcript" || true)
 : > "$marker"
 model_args=()
 [ -z "$MODEL" ] || model_args=(--model "$MODEL")
-hub_rel="${HUB#/}"
+PROMOTE="$HOME/.config/ctx/promote"; mkdir -p "$PROMOTE"
+promote_rel="${PROMOTE#/}"
 CTX_REVIEW=1 nohup "$CLAUDE" -p --resume "$sid" "/ctx:promote --auto" "${model_args[@]}" \
-  --max-turns 20 --max-budget-usd 0.50 --add-dir "$HUB" \
-  --allowedTools "Bash(ctx *)" "Bash(git -C $HUB status*)" "Bash(git -C $HUB checkout -b promote/*)" \
-    "Bash(git -C $HUB add entries/*)" "Bash(git -C $HUB commit *)" "Bash(git -C $HUB push -u origin promote/*)" \
-    "Bash(gh pr create *)" "Bash(bash $HUB/scripts/validate.sh)" "Bash($HUB/scripts/validate.sh)" \
-    "Read" "Edit(//$hub_rel/entries/**)" \
+  --max-turns 25 --max-budget-usd 0.50 --add-dir "$HUB" --add-dir "$PROMOTE" \
+  --allowedTools "Bash(ctx *)" "Bash(date *)" "Bash(git -C $HUB fetch*)" "Bash(git -C $HUB worktree *)" "Bash(git -C $HUB remote get-url*)" \
+    "Bash(git -C $PROMOTE/* add entries/*)" "Bash(git -C $PROMOTE/* commit *)" "Bash(git -C $PROMOTE/* push origin HEAD:refs/heads/promote/*)" \
+    "Bash(gh pr create *)" "Bash(bash $PROMOTE/*/scripts/validate.sh)" \
+    "Read" "Edit(//$promote_rel/*/entries/**)" \
   --disallowedTools "Bash(gh api *)" "Bash(gh auth *)" "Bash(gh repo *)" "Bash(gh secret *)" "Bash(gh pr merge *)" \
-    "Bash(git push --force*)" "Bash(git push -f*)" "Bash(git remote *)" "Bash(git reset *)" \
+    "Bash(git push --force*)" "Bash(git push -f*)" "Bash(*push origin HEAD:main*)" "Bash(git remote add*)" "Bash(git reset *)" "Bash(git -C $HUB checkout*)" \
   > "$SESSIONS/$sid.review.log" 2>&1 < /dev/null &
 exit 0

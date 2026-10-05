@@ -17,6 +17,7 @@ declare module 'claude-code' {
       compactions: number
       primed: boolean
       srcUse: string
+      lastRemote: number
     }
   }
 }

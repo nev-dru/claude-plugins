@@ -65,6 +65,17 @@ Nothing asks the model "was that useful"; self-reports skew positive. Every entr
 
 `ctx report` ranks entries: **proven** (reused), **ignored** (offered 3+ times, never fetched — pruning candidates), **suspect/wrong** (to dispute or fix). The one rigorous measure stays the with/without eval (phase 2); these are the live proxies.
 
+## Staying current across sessions
+
+Every session on a machine reads the same local index (`~/.config/ctx/hub/index.db`), so one sync updates them all.
+
+- **Session start, then every 5 minutes** (on your next prompt): `ctx sync --if-newer --no-views` asks GitHub for a newer release and installs it only if the corpus changed. It never writes into your repo.
+- **Every prompt:** a ~10 ms local check notices an index installed by any session; the feed shows `index b1 → b2 (+2 entries)` and the model is told once that the hub changed.
+- **Right after a promote push:** the skill rebuilds the index from your hub checkout and installs it immediately (`ctx sync --from`), so you don't wait for CI.
+- Syncs stage in private folders and swap the index in with one rename; a search that lands mid-swap retries.
+
+`ctx sync` with no flags still also rewrites the repo's `docs/ctx/INDEX.md` and `.claude/rules/ctx-*.md`; run it when you want those refreshed.
+
 ## Skills
 
 - `/ctx:search` — the search loop (`ctx search` → `ctx get` → section), with the rule to flag false entries with evidence.

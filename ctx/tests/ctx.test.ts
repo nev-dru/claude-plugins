@@ -24,7 +24,7 @@ test('prompt naming a file gets a route pointer in context', async ($, on) => {
 
 test('prompt without signals passes through', async ($, on) => {
   let seen, spawned = 0
-  on('process.run', () => { spawned += 1; return { value: { exitCode: 0, stdout: '', stderr: '' } } })
+  on('process.run', ($, e) => { if (e.argv[1] !== 'sync' && e.argv[1] !== 'status') spawned += 1; return { value: { exitCode: 0, stdout: '', stderr: '' } } }) // the per-prompt index check is expected
   on('prompt.submit', ($, e) => { seen = e; return { text: e.text } })
   await $.prompt.submit({ text: 'what time is it' })
   expect(seen.context ?? []).toEqual([])
@@ -33,7 +33,7 @@ test('prompt without signals passes through', async ($, on) => {
 
 test('jira key adds a howto hint without spawning ctx', async ($, on) => {
   let seen, spawned = 0
-  on('process.run', () => { spawned += 1; return { value: { exitCode: 0, stdout: '', stderr: '' } } })
+  on('process.run', ($, e) => { if (e.argv[1] !== 'sync' && e.argv[1] !== 'status') spawned += 1; return { value: { exitCode: 0, stdout: '', stderr: '' } } }) // the per-prompt index check is expected
   on('prompt.submit', ($, e) => { seen = e; return { text: e.text } })
   await $.prompt.submit({ text: 'look at PAY-812 and tell me the status' })
   expect((seen.context ?? []).join('\n')).toMatch(/ctx howto jira/)
@@ -404,5 +404,47 @@ test('querying a source is recorded as used and shown in the pane', async ($, on
   expect(used).toEqual(['source:claude-docs used', 'source:max-docs used'])
   const ui = await $.ui.mount(PANE)
   expect(await ui.find({ type: 'Text', text: /claude-docs 1/ })).toBeDefined()
+  await ui.unmount()
+})
+
+// ---- refresh: other sessions' pushes reach this one ----
+function refreshStubs(on, argv, state) {
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => {
+    argv.push(e.argv)
+    const a = e.argv.slice(1).join(' ')
+    if (a === 'sync --check') return { value: { exitCode: 0, stdout: 'index: ' + state.build + '\n', stderr: '' } }
+    if (a.startsWith('status')) return { value: { exitCode: 0, stdout: JSON.stringify({ build_id: state.build, active: state.active, scopes: { rufalo: state.active }, memory_lines: 1 }) + '\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: 'index: up to date ' + state.build + '\n', stderr: '' } }
+  })
+}
+
+test('session start asks GitHub for a newer index without touching the repo', async ($, on) => {
+  const argv = [], state = { build: 'b1', active: 15 }
+  refreshStubs(on, argv, state)
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  expect(argv.some((a) => a.slice(1).join(' ') === 'sync --if-newer --no-views')).toBe(true)
+  await $.prompt.submit({ text: 'one' })
+  await $.prompt.submit({ text: 'two' })
+  // the remote check is throttled; the local check runs every prompt
+  expect(argv.filter((a) => a[2] === '--if-newer').length).toBe(1)
+  expect(argv.filter((a) => a.slice(1).join(' ') === 'sync --check').length).toBeGreaterThanOrEqual(3)
+})
+
+test('an index synced by another session is noticed, shown, and told to the model once', async ($, on) => {
+  const argv = [], seen = [], state = { build: 'b1', active: 15 }
+  refreshStubs(on, argv, state)
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'first' })
+  state.build = 'b2'; state.active = 17
+  await $.prompt.submit({ text: 'second' })
+  await $.prompt.submit({ text: 'third' })
+  expect((seen[1].context ?? []).join('\n')).toMatch(/Team hub updated during this session: 17 active entries \(was 15\)/)
+  expect((seen[2].context ?? []).join('\n')).not.toMatch(/Team hub updated/)
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /index b1 → b2 \(\+2 entries\)/ })).toBeDefined()
   await ui.unmount()
 })
