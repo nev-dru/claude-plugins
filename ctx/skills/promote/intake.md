@@ -73,10 +73,9 @@ Prefer a second occurrence before promoting anything out of L6 or L7: one-off le
 - **Not here:** team knowledge (→ hub), secrets (→ nowhere), instructions every session must follow (→ global CLAUDE.md).
 - **Example:** `preference` — "Weekends are for trail running; never schedule anything on Saturday mornings."
 
-### L6 — Personal memory
-- **Belongs:** how this person works: preferences, corrections they gave, local paths, their projects and deadlines.
-- **Signals:** "I prefer", "for me", "on my laptop", a correction of the assistant's behaviour.
-- **Not here:** team facts (→ hub), secrets (→ nowhere). Keep MEMORY.md under 60 lines; topic files hold the detail.
+### L6 — Claude project memory
+- **Belongs:** what was learned while working in one project — its quirks, how the user works there. Claude Code writes it; the personal layer's project map points other sessions at it.
+- **Not here:** facts about the user that matter across projects (→ personal layer), instructions (→ CLAUDE.md files), team facts (→ hub), secrets (→ nowhere). Keep MEMORY.md under 60 lines; topic files hold the detail.
 
 ### L7 — Working state
 - **Belongs:** the task: plan, TODO, decisions taken *for this task*, what is left, MR description, ticket comments.
@@ -102,7 +101,7 @@ Every session review also reads `~/.claude/CLAUDE.md` and the repo's `CLAUDE.loc
 - **misplaced lines** — a fact about the user (→ personal layer), a team rule (→ AGENTS.md or hub), a "never" a hook can enforce (→ hook);
 - **size** — over budget: move detail out and leave one line.
 
-Nothing is changed without the user confirming the exact diff. With `--auto`, proposals go in the PR body only.
+Nothing is changed without the user confirming the exact diff. With `--auto`, upkeep is skipped: these files are personal and never go into a hub PR.
 
 ## Ties and edge cases
 - **Both repo and team?** Detail in repo docs; a short hub entry (`reference`) that points to it if other repos must discover it.

@@ -30,7 +30,7 @@ const PATH_RE = /(?:^|[\s"'`(\[])((?:\.{0,2}\/)?[\w.-]+(?:\/[\w.-]+)+\.[A-Za-z0-
 // Project keys are letters only; common technical tokens shaped like keys (SHA-256, UTF-8, RFC-7231) are excluded.
 const JIRA_RE = /\b(?!(?:UTF|SHA|ISO|RFC|GPT|AES|CVE|MD|HTTP|TLS|RSA|CRC|IEEE|ECMA|RTX|GTX|ARM|X)-)[A-Z][A-Z]{1,9}-\d+\b/
 // A question about team knowledge itself: what the hub holds, our conventions/decisions, project instructions.
-const KNOWLEDGE_RE = /\b(context hub|knowledge hub|the hub|team (knowledge|context)|our (context|conventions?|decisions?|setup|standards?|practices?|instructions?)|project instructions?|conventions?|what do we (know|have)|how do we|ctx|tell me about|what (is|was|are) (the|my|our)|projects?|remember|last time|earlier session|do you know)\b/i
+const KNOWLEDGE_RE = /\b(context hub|knowledge hub|the hub|team (knowledge|context)|our (context|conventions?|decisions?|setup|standards?|practices?|instructions?)|project instructions?|what do we (know|have)|how do we|tell me about (the |my |our |this )?[\w.-]+ (project|repo|tool)|do you (know|remember)|what did (we|i) (decide|learn|do)|last time we|in (an|another|the) earlier session|ctx (search|get|list))\b/i
 const TRACE_RE = /Traceback \(most recent call last\)|\n\s+at .+\(.+:\d+:\d+\)|panic: /
 
 // Paths named in the prompt, made relative to the session cwd so dragged-in absolute paths still route.
@@ -144,7 +144,7 @@ async function refreshIndex($, root, remote) {
   if (remote) {
     await update($, lastRemote, () => Date.now())
     try {
-      await $.process.run([CTX, 'sync', '--if-newer', '--no-views'], { timeoutMs: 15000 })
+      await $.process.run([CTX, 'sync', '--if-newer', '--no-views', '--background'], { timeoutMs: 5000 }) // detached; --check sees the result
     } catch {}
     try {
       // Personal layer (project map, Claude memory, personal entries): detached, returns at once.
@@ -160,7 +160,16 @@ async function refreshIndex($, root, remote) {
     id = 'no ctx'
   }
   const before = String(await read($, index))
-  if (id === before) return null
+  if (id === before) {
+    if (remote) {
+      try {
+        const r = await $.process.run([CTX, 'status', '--json', '--cwd', root])
+        const text = r.stdout.trim()
+        if (text.startsWith('{')) await update($, health, () => text) // personal counts and file sizes move too
+      } catch {}
+    }
+    return null
+  }
   const oldHealth = parseJSON(await read($, health), {})
   await update($, index, () => id)
   try {
@@ -281,6 +290,10 @@ export function register(on) {
           const prev = inp[id] ?? { reused: false, suspect: false }
           inp[id] = { ...prev, title: cards[0].title, how: 'used', terms: distinctiveTerms(text) }
           await pushFeed($, 'get', 'get ' + short(id) + (/--section/.test(c.rest) ? ' §' : /--full/.test(c.rest) ? ' (full)' : ''))
+        } else if (/^---\n/.test(text) || /^(ctx: )?no /.test(text) === false && text.trim()) {
+          // A personal entry, project map or memory file: shown raw, without a card line.
+          const title = (/^title: '?([^'\n]+)'?$/m.exec(text) || /^name: (.+)$/m.exec(text) || [])[1] || c.rest.split(/\s+/)[0].split('/').pop()
+          await pushFeed($, 'get', 'get personal ' + title)
         } else {
           await pushFeed($, 'get', 'get ' + (firstULID(c.rest) ? short(firstULID(c.rest)) : '?') + ' → no entry')
         }

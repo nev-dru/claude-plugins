@@ -425,7 +425,7 @@ test('session start asks GitHub for a newer index without touching the repo', as
   refreshStubs(on, argv, state)
   on('prompt.submit', ($, e) => ({ text: e.text }))
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
-  expect(argv.some((a) => a.slice(1).join(' ') === 'sync --if-newer --no-views')).toBe(true)
+  expect(argv.some((a) => a.slice(1).join(' ').startsWith('sync --if-newer --no-views'))).toBe(true)
   await $.prompt.submit({ text: 'one' })
   await $.prompt.submit({ text: 'two' })
   // the remote check is throttled; the local check runs every prompt
@@ -487,4 +487,52 @@ test('the pointer asks for a search first on questions about projects, tools, th
   await $.prompt.submit({ text: 'tell me about the ROI project' })
   expect((seen[0].context ?? []).join('\n')).toMatch(/a project, a tool, the user or earlier work.*before reading files/)
   expect((seen[1].context ?? []).join('\n')).toMatch(/ctx search/)
+})
+
+// ---- review fixes ----
+test('ordinary coding prompts get no search hint', async ($, on) => {
+  const seen = []
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status' ? '{"build_id":"b1","active":5}\n' : 'index: b1\n', stderr: '' } }))
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hi' })
+  for (const t of ['what is the error on line 40?', 'rename the project folder', 'remember to commit', 'why does this project fail to build', 'what was the output']) {
+    await $.prompt.submit({ text: t })
+  }
+  for (const e of seen.slice(1)) expect((e.context ?? []).join('\n')).not.toMatch(/ctx search/)
+})
+
+test('questions about a project, the user or earlier work still get the hint', async ($, on) => {
+  const seen = []
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status' ? '{"build_id":"b1","active":5}\n' : 'index: b1\n', stderr: '' } }))
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hi' })
+  for (const t of ['tell me about the ROI project', 'do you remember what we decided about tracing?', 'what do we know about the HITL transport', 'what are our conventions for commits']) {
+    await $.prompt.submit({ text: t })
+  }
+  for (const e of seen.slice(1)) expect((e.context ?? []).join('\n')).toMatch(/ctx search/)
+})
+
+test('the remote check runs in the background', async ($, on) => {
+  const argv = [], state = { build: 'b1', active: 15 }
+  refreshStubs(on, argv, state)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  expect(argv.some((a) => a.slice(1).join(' ') === 'sync --if-newer --no-views --background')).toBe(true)
+})
+
+test('a successful personal get shows as a personal get in the feed', async ($, on) => {
+  const argv = []
+  stubs(on, argv)
+  on('tool.call', ($, e) => ({ result: '---\nid: P-dev-x-abc123\nkind: project\ntitle: \'x\'\n---\n## Where\n/x' }))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get P-dev-x-abc123' })
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /get personal x/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /no entry/ })).toBeUndefined()
+  await ui.unmount()
 })

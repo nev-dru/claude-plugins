@@ -8,7 +8,6 @@ CONFIG="${CTX_CONFIG:-$HOME/.config/ctx/config.json}"
 SESSIONS="${CTX_SESSIONS_DIR:-$HOME/.config/ctx/sessions}"
 CLAUDE="${CTX_CLAUDE_BIN:-claude}"
 [ -f "$CONFIG" ] && grep -q '"auto_promote": *true' "$CONFIG" || exit 0
-HUB="$(sed -n 's/.*"hub_dir": *"\([^"]*\)".*/\1/p' "$CONFIG")"; HUB="${HUB:-$HOME/dev/context-hub}"
 MODEL="$(sed -n 's/.*"review_model": *"\([^"]*\)".*/\1/p' "$CONFIG")"
 input="$(cat)"
 sid="$(printf '%s' "$input" | sed -n 's/.*"session_id": *"\([^"]*\)".*/\1/p')"
@@ -26,13 +25,12 @@ model_args=()
 [ -z "$MODEL" ] || model_args=(--model "$MODEL")
 PROMOTE="$HOME/.config/ctx/promote"; mkdir -p "$PROMOTE"
 promote_rel="${PROMOTE#/}"
-CTX_REVIEW=1 nohup "$CLAUDE" -p --resume "$sid" "/ctx:promote --auto" "${model_args[@]}" \
-  --max-turns 25 --max-budget-usd 0.50 --add-dir "$HUB" --add-dir "$PROMOTE" \
-  --allowedTools "Bash(ctx *)" "Bash(date *)" "Bash(git -C $HUB fetch*)" "Bash(git -C $HUB worktree *)" "Bash(git -C $HUB remote get-url*)" \
-    "Bash(git -C $PROMOTE/* add entries/*)" "Bash(git -C $PROMOTE/* commit *)" "Bash(git -C $PROMOTE/* push origin HEAD:refs/heads/promote/*)" \
-    "Bash(gh pr create *)" "Bash(bash $PROMOTE/*/scripts/validate.sh)" \
-    "Read" "Edit(//$promote_rel/*/entries/**)" \
-  --disallowedTools "Bash(gh api *)" "Bash(gh auth *)" "Bash(gh repo *)" "Bash(gh secret *)" "Bash(gh pr merge *)" \
-    "Bash(git push --force*)" "Bash(git push -f*)" "Bash(*push origin HEAD:main*)" "Bash(git remote add*)" "Bash(git reset *)" "Bash(git -C $HUB checkout*)" \
+# All hub writes go through bin/ctx-promote, which validates its arguments and refuses to push to main
+# when CTX_REVIEW is set. Raw git and gh are denied outright. CTX_NO_PERSONAL keeps the personal layer
+# (Claude memory, personal notes, the project map) out of this run, whose output becomes a hub PR.
+CTX_REVIEW=1 CTX_NO_PERSONAL=1 nohup "$CLAUDE" -p --resume "$sid" "/ctx:promote --auto" ${model_args[@]+"${model_args[@]}"} \
+  --max-turns 25 --max-budget-usd 0.50 --add-dir "$PROMOTE" \
+  --allowedTools "Bash(ctx *)" "Bash(ctx-promote *)" "Bash(date *)" "Read" "Edit(//$promote_rel/**)" \
+  --disallowedTools "Bash(git *)" "Bash(gh *)" "Bash(ctx sync *)" "Bash(ctx config *)" "Bash(ctx local *)" "Bash(ctx-promote publish * main*)" \
   > "$SESSIONS/$sid.review.log" 2>&1 < /dev/null &
 exit 0

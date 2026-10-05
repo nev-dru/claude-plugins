@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# ctx-promote: the only way the promote skill writes to the hub. Work happens in a private worktree under
+# ~/.config/ctx/promote (never in the shared hub checkout); every argument is validated here, so a
+# permission rule that allows this script cannot be widened by argument shape.
+#
+#   ctx-promote start                                   → prints a new worktree path (detached at origin/main)
+#   ctx-promote commit  <wt> <message>                  → validate, then commit entries/ only
+#   ctx-promote publish <wt> main                       → push to main (refused inside an unattended run)
+#   ctx-promote publish <wt> pr <slug> <title> <body>   → push promote/<date>-<slug>, open a draft PR
+#   ctx-promote cleanup <wt>                            → remove the worktree
+set -euo pipefail
+die() { echo "ctx-promote: $*" >&2; exit 2; }
+PROMOTE="$HOME/.config/ctx/promote"
+hub() {
+  local h="${CTX_HUB_DIR:-}"
+  [ -n "$h" ] || h="$(ctx config get hub-dir 2>/dev/null || true)"
+  [ -n "$h" ] && [ -d "$h/.git" ] || die "hub checkout not found (ctx config hub-dir PATH)"
+  printf '%s' "$h"
+}
+real() { (cd "$1" 2>/dev/null && pwd -P) || return 1; }
+check_wt() {
+  local wt="$1" r p
+  r="$(real "$wt")" || die "no such worktree: $wt"
+  mkdir -p "$PROMOTE"; p="$(real "$PROMOTE")"
+  case "$r/" in "$p"/*/) ;; *) die "$wt is not a promote worktree under $PROMOTE";; esac
+  [ "$r" != "$p" ] || die "$wt is the promote directory itself"
+  [ -f "$r/.git" ] || die "$wt is not a git worktree"
+  printf '%s' "$r"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  start)
+    H="$(hub)"; mkdir -p "$PROMOTE"
+    WT="$PROMOTE/$(date +%Y%m%d-%H%M%S)-$$"
+    git -C "$H" fetch -q origin
+    git -C "$H" worktree add -q --detach "$WT" origin/main
+    printf '%s\n' "$WT" ;;
+  commit)
+    [ $# -eq 2 ] || die "usage: ctx-promote commit <wt> <message>"
+    WT="$(check_wt "$1")"; MSG="$2"
+    [ -x "$WT/scripts/validate.sh" ] && "$WT/scripts/validate.sh" >/dev/null
+    git -C "$WT" add -- entries/
+    git -C "$WT" commit -q -m "$MSG"
+    git -C "$WT" rev-parse --short HEAD ;;
+  publish)
+    [ $# -ge 2 ] || die "usage: ctx-promote publish <wt> main | pr <slug> <title> <body-file>"
+    WT="$(check_wt "$1")"; MODE="$2"
+    case "$MODE" in
+      main)
+        [ -z "${CTX_REVIEW:-}" ] || die "an unattended run may not push to main; use: publish <wt> pr …"
+        git -C "$WT" pull -q --rebase origin main
+        git -C "$WT" push -q origin HEAD:refs/heads/main
+        SHA="$(git -C "$WT" rev-parse --short HEAD)"
+        if [ -z "${CTX_PROMOTE_NO_SYNC:-}" ] && make -C "$WT" index >/dev/null 2>&1; then
+          ctx sync --from "$WT/build" --no-views >/dev/null 2>&1 || true
+        fi
+        echo "pushed $SHA to main" ;;
+      pr)
+        [ $# -eq 5 ] || die "usage: ctx-promote publish <wt> pr <slug> <title> <body-file>"
+        SLUG="$3"; TITLE="$4"; BODY="$5"
+        [[ "$SLUG" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || die "slug must be lowercase letters, digits and dashes"
+        BR="promote/$(date +%Y-%m-%d)-$SLUG"
+        BODYR="$(cd "$(dirname "$BODY")" 2>/dev/null && pwd -P)/$(basename "$BODY")"
+        case "$BODYR" in "$WT"/*) ;; *) die "the PR body must be a file inside the worktree";; esac
+        git -C "$WT" push -q origin "HEAD:refs/heads/$BR"
+        REPO="$(git -C "$WT" remote get-url origin | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##')"
+        gh pr create --repo "$REPO" --head "$BR" --base main --draft --title "$TITLE" --body-file "$BODYR" ;;
+      *) die "publish mode must be main or pr" ;;
+    esac ;;
+  cleanup)
+    [ $# -eq 1 ] || die "usage: ctx-promote cleanup <wt>"
+    WT="$(check_wt "$1")"; H="$(hub)"
+    git -C "$H" worktree remove --force "$WT"
+    git -C "$H" worktree prune ;;
+  *) die "usage: ctx-promote start | commit | publish | cleanup" ;;
+esac

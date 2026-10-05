@@ -3,7 +3,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; SCRIPT="$HERE/../hooks/session-end.sh"
 T="$(mktemp -d)"; export CTX_CONFIG="$T/config.json" CTX_SESSIONS_DIR="$T/sessions" CTX_CLAUDE_BIN="$T/claude"
-printf '#!/usr/bin/env bash\necho "$@" > "%s/spawned"\n' "$T" > "$T/claude"; chmod +x "$T/claude"
+printf '#!/usr/bin/env bash\necho "$@" > "%s/spawned"; echo "NOPERSONAL=$CTX_NO_PERSONAL" >> "%s/spawned"\n' "$T" "$T" > "$T/claude"; chmod +x "$T/claude"
 # Real transcripts carry tool results as "user" rows and the plugin's own pointer lines mention `ctx get`;
 # neither may count as a turn or a lookup.
 mk_transcript() { local turns=$1 lookups=$2; : > "$T/t.jsonl"
@@ -25,12 +25,21 @@ grep -q -- "--resume s1" "$T/spawned" || fail "resume id missing: $(cat "$T/spaw
 grep -q -- "/ctx:promote --auto" "$T/spawned" || fail "review prompt missing"
 grep -q -- "--add-dir" "$T/spawned" || fail "hub dir not added for the headless run"
 grep -q -- "--disallowedTools" "$T/spawned" || fail "dangerous tools not disallowed"
-grep -q -- "gh api" "$T/spawned" || fail "gh api not disallowed"
+grep -qF -- "Bash(ctx-promote publish * main*)" "$T/spawned" || fail "publish to main not denied"
 grep -q -- "--model haiku" "$T/spawned" || fail "review model from config not passed"
-! grep -q -- '"Bash(gh \*)"' "$T/spawned" || fail "blanket gh allow still present"
-! grep -q -- '"Bash(git \*)"' "$T/spawned" || fail "blanket git allow still present"
+grep -q "NOPERSONAL=1" "$T/spawned" || fail "the unattended run can see the personal layer"
+grep -q -- "Bash(ctx-promote" "$T/spawned" || fail "hub writes not routed through ctx-promote"
+ALLOWED="$(sed -n 's/.*--allowedTools \(.*\) --disallowedTools.*/\1/p' "$T/spawned")"
+[[ "$ALLOWED" != *"Bash(git"* && "$ALLOWED" != *"Bash(gh"* ]] || fail "raw git or gh allowed: $ALLOWED"
+grep -q -- "--disallowedTools.*Bash(git \*).*Bash(gh \*)" "$T/spawned" || fail "raw git/gh not denied"
 [ $(( (end - start) / 1000000 )) -lt 1000 ] || fail "took longer than 1 s"
 rm -f "$T/spawned"; run; [ ! -e "$T/spawned" ] || fail "spawned twice for one session (marker)"
+# no review_model configured: the run still starts (macOS bash 3.2 + set -u + empty array)
+echo '{"auto_promote": true}' > "$CTX_CONFIG"
+printf '{"session_id":"s2","transcript_path":"%s"}' "$T/t.jsonl" | bash "$SCRIPT"; sleep 0.3
+[ -e "$T/spawned" ] || fail "no spawn when review_model is unset"
+! grep -q -- "--model" "$T/spawned" || fail "--model passed without a configured model"
+rm -f "$T/spawned"
 printf '{"session_id":"../evil","transcript_path":"%s","cwd":"/work","hook_event_name":"SessionEnd","reason":"other"}' "$T/t.jsonl" | bash "$SCRIPT"
 [ ! -e "$T/spawned" ] || fail "spawned with an invalid session id"
 echo "OK session-end gates"
