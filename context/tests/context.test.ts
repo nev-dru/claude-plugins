@@ -6,9 +6,11 @@ const POINTER = '[01J9ZK3Q7R8M2V5X1B4N6D8F0A] Billing retries are not idempotent
 // event it receives so the test can read the context the mod added.
 test('prompt naming a file gets a route pointer in context', async ($, on) => {
   let seen
+  const argv0 = []
   on('session.start', () => ({ cwd: '/work' }))
   on('command.register', () => ({ value: undefined }))
   on('process.run', ($, e) => {
+    argv0.push(e.argv[0])
     if (e.argv[1] === 'route') return { value: { exitCode: 0, stdout: POINTER + '\n', stderr: '' } }
     return { value: { exitCode: 0, stdout: 'index: abc-1\n', stderr: '' } }
   })
@@ -16,6 +18,8 @@ test('prompt naming a file gets a route pointer in context', async ($, on) => {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await $.prompt.submit({ text: 'fix the retry loop in src/pay/client.go' })
   expect((seen.context ?? []).join('\n')).toContain(POINTER)
+  // The mod runs the plugin's own shim, not whatever `ctx` is on PATH (the mod's process has no plugin bin on PATH).
+  for (const a of argv0) expect(a).toMatch(/\/bin\/ctx$/)
 })
 
 test('prompt without signals passes through', async ($, on) => {

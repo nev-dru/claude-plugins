@@ -19,10 +19,21 @@ function pathsIn(text) {
   return [...out].slice(0, 20)
 }
 
+// The plugin's own shim (bin/ctx), resolved from this module's location: the mod's process does not
+// have the plugin bin directory on PATH (only Claude's Bash tool does). Falls back to a bare `ctx`.
+function ctxBin() {
+  try {
+    return decodeURIComponent(new URL('../bin/ctx', import.meta.url).pathname)
+  } catch {
+    return 'ctx'
+  }
+}
+const CTX = ctxBin()
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     try {
-      const r = await $.process.run(['ctx', 'sync', '--check'])
+      const r = await $.process.run([CTX, 'sync', '--check'])
       const line = r.stdout.trim()
       await update($, index, () => (line.startsWith('index: ') ? line.slice(7) : 'missing'))
     } catch {
@@ -39,7 +50,7 @@ export function register(on) {
     const files = pathsIn(e.text)
     if (files.length > 0) {
       try {
-        const r = await $.process.run(['ctx', 'route', '--files', ...files])
+        const r = await $.process.run([CTX, 'route', '--files', ...files])
         if (r.exitCode === 0 && r.stdout.trim() !== '') {
           // Each pointer is injected once per session (reset after compaction).
           const seen = new Set((await read($, shown)).split('\n').filter(Boolean))
@@ -80,7 +91,7 @@ export function register(on) {
   on('command.run', { command: 'ctx' }, async ($, e) => {
     if ((e.args || '').trim() === 'explain') {
       try {
-        const r = await $.process.run(['ctx', 'report', '--today'])
+        const r = await $.process.run([CTX, 'report', '--today'])
         return { text: r.stdout.trim() || 'ctx report: no calls today' }
       } catch (err) {
         return { text: 'ctx report unavailable: ' + String(err) }
