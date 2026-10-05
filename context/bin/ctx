@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Shim: run the pinned ctx release binary, downloading and verifying it on first use.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+tag="$(cat "$here/ctx.version")"
+repo="nev-dru/context-hub"
+os="$(uname -s | tr '[:upper:]' '[:lower:]')"; arch="$(uname -m)"
+case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac
+asset="ctx-$os-$arch"
+bindir="$HOME/.config/ctx/bin"; bin="$bindir/ctx-$tag"
+if [ ! -x "$bin" ]; then
+  mkdir -p "$bindir"; tmp="$(mktemp -d "$bindir/dl.XXXXXX")"
+  gh release download "$tag" --repo "$repo" -p "$asset" -p SHA256SUMS -D "$tmp" --clobber >/dev/null
+  expected="$(grep " $asset\$" "$tmp/SHA256SUMS" | awk '{print $1}')"
+  actual="$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')"
+  [ "$expected" = "$actual" ] || { echo "ctx: checksum mismatch for $asset ($expected vs $actual)" >&2; exit 1; }
+  chmod +x "$tmp/$asset"; mv "$tmp/$asset" "$bin"; rm -rf "$tmp"
+fi
+exec "$bin" "$@"

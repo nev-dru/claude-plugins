@@ -1,5 +1,6 @@
 {
   "name": "context",
-  "version": "0.0.1",
-  "description": "Team context: search reviewed knowledge entries and promote lessons (phase 0 skeleton)."
+  "version": "0.1.0",
+  "description": "Team context: search reviewed knowledge entries, promote lessons, and see which team context a session used.",
+  "author": { "name": "nev-dru" }
 }
