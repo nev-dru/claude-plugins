@@ -8,6 +8,13 @@ declare module 'claude-code' {
       compacted: boolean
       last: string
       cwd: string
+      feed: string
+      inplay: string
+      files: string
+      health: string
+      queries: string
+      turns: number
+      compactions: number
     }
   }
 }

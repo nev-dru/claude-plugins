@@ -1,4 +1,5 @@
 import { atom, read, update } from 'claude-code'
+import { parseCards, distinctiveTerms, findReuse, isFailure, normalizeQuery } from './signals.js'
 
 // Session counters shown in the band and the /ctx pane. Declared in types/index.d.ts.
 const pointers = atom({ plugin: 'ctx', key: 'pointers' }, 0)
@@ -8,6 +9,18 @@ const index = atom({ plugin: 'ctx', key: 'index' }, '?')
 const compacted = atom({ plugin: 'ctx', key: 'compacted' }, false)
 const last = atom({ plugin: 'ctx', key: 'last' }, '')
 const cwd = atom({ plugin: 'ctx', key: 'cwd' }, '')
+// Live-view model, JSON-encoded: feed lines, entries in play, files read, health, queries seen, turn count.
+const feed = atom({ plugin: 'ctx', key: 'feed' }, '[]')
+const inplay = atom({ plugin: 'ctx', key: 'inplay' }, '{}')
+const files = atom({ plugin: 'ctx', key: 'files' }, '[]')
+const health = atom({ plugin: 'ctx', key: 'health' }, '{}')
+const queries = atom({ plugin: 'ctx', key: 'queries' }, '[]')
+const turns = atom({ plugin: 'ctx', key: 'turns' }, 0)
+const compactions = atom({ plugin: 'ctx', key: 'compactions' }, 0)
+
+const FEED_CAP = 40
+const INPLAY_CAP = 60
+const FILES_CAP = 30
 
 // Deterministic signals in a prompt: a file path, a Jira key, a stack trace.
 const PATH_RE = /(?:^|[\s"'`(\[])((?:\.{0,2}\/)?[\w.-]+(?:\/[\w.-]+)+\.[A-Za-z0-9]+)/g
@@ -18,12 +31,12 @@ const TRACE_RE = /Traceback \(most recent call last\)|\n\s+at .+\(.+:\d+:\d+\)|p
 // Paths named in the prompt, made relative to the session cwd so dragged-in absolute paths still route.
 function pathsIn(text, root) {
   const out = new Set()
-  for (const m of String(text ?? '').matchAll(PATH_RE)) {
-    let p = m[1]
-    if (root && p.startsWith(root + '/')) p = p.slice(root.length + 1)
-    out.add(p)
-  }
+  for (const m of String(text ?? '').matchAll(PATH_RE)) out.add(relative(m[1], root))
   return [...out].slice(0, 20)
+}
+
+function relative(p, root) {
+  return root && p.startsWith(root + '/') ? p.slice(root.length + 1) : p
 }
 
 // The plugin's own shim (bin/ctx), resolved from this module's location: the mod's process does not
@@ -37,9 +50,53 @@ function ctxBin() {
 }
 const CTX = ctxBin()
 
+// State values are JSON strings; a corrupt value falls back so a render never throws.
+// (read() is always called with the atom const itself so the mod scan can list what is read.)
+function parseJSON(text, fallback) {
+  try {
+    const v = JSON.parse(text)
+    return v === null || typeof v !== typeof fallback || Array.isArray(v) !== Array.isArray(fallback) ? fallback : v
+  } catch {
+    return fallback
+  }
+}
+
+async function writeInplay($, inp) {
+  const ids = Object.keys(inp)
+  if (ids.length > INPLAY_CAP) for (const id of ids.slice(0, ids.length - INPLAY_CAP)) delete inp[id]
+  await update($, inplay, () => JSON.stringify(inp))
+}
+
+async function pushFeed($, kind, text) {
+  const items = parseJSON(await read($, feed), [])
+  const t = new Date().toISOString().slice(11, 16)
+  await update($, feed, () => JSON.stringify([{ t, kind, text }, ...items].slice(0, FEED_CAP)))
+}
+
+function resultText(result) {
+  if (typeof result?.result === 'string') return result.result
+  if (typeof result === 'string') return result
+  try {
+    return JSON.stringify(result ?? '')
+  } catch {
+    return ''
+  }
+}
+
+function short(id) {
+  return id.slice(-4)
+}
+
+async function recordFeedback($, id, verdict, note) {
+  try {
+    await $.process.run([CTX, 'feedback', id, verdict, '--note', note.slice(0, 160)])
+  } catch {}
+}
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
-    await update($, cwd, () => (typeof e.cwd === 'string' ? e.cwd.replace(/\/+$/, '') : ''))
+    const root = typeof e.cwd === 'string' ? e.cwd.replace(/\/+$/, '') : ''
+    await update($, cwd, () => root)
     try {
       const r = await $.process.run([CTX, 'sync', '--check'])
       const line = r.stdout.trim()
@@ -48,17 +105,26 @@ export function register(on) {
       await update($, index, () => 'no ctx')
     }
     try {
-      await $.command.register({ name: 'ctx', description: 'Show what team context this session used', argumentHint: '[explain]' })
+      const r = await $.process.run([CTX, 'status', '--json', '--cwd', root])
+      const text = r.stdout.trim()
+      await update($, health, () => (text.startsWith('{') ? text : '{}'))
+    } catch {
+      await update($, health, () => '{"error":"ctx unavailable"}')
+    }
+    try {
+      await $.command.register({ name: 'ctx', description: 'Live view of the team context this session uses', argumentHint: '[explain|close]' })
     } catch {}
     return next(e)
   })
 
   on('prompt.submit', async ($, e, next) => {
+    await update($, turns, (n) => n + 1)
     const extra = []
-    const files = pathsIn(e.text, await read($, cwd))
-    if (files.length > 0) {
+    const root = await read($, cwd)
+    const named = pathsIn(e.text, root)
+    if (named.length > 0) {
       try {
-        const r = await $.process.run([CTX, 'route', '--files', ...files])
+        const r = await $.process.run([CTX, 'route', '--files', ...named])
         if (r.exitCode === 0 && r.stdout.trim() !== '') {
           // Each pointer is injected once per session (reset after compaction).
           const seen = new Set((await read($, shown)).split('\n').filter(Boolean))
@@ -68,44 +134,152 @@ export function register(on) {
             await update($, shown, () => [...seen, ...fresh].join('\n'))
             await update($, pointers, (n) => n + fresh.length)
             await update($, last, () => fresh.join('\n'))
+            const inp = parseJSON(await read($, inplay), {})
+            for (const c of parseCards(fresh.join('\n'))) if (!inp[c.id]) inp[c.id] = { title: c.title, how: 'offered', reused: false, suspect: false, terms: [] }
+            await writeInplay($, inp)
+            await pushFeed($, 'pointer', 'pointer ×' + fresh.length + ' ← ' + named.slice(0, 2).join(', ') + (named.length > 2 ? ' …' : ''))
             $.ui.invalidate('ui.render')
           }
         }
       } catch {}
     }
     // Deterministic source hints (spec §4): a Jira key or a stack trace names a source or a search; no process is spawned.
-    if (JIRA_RE.test(e.text)) extra.push('A Jira key appears in this prompt. If a Jira source is declared (`ctx sources`), run `ctx howto jira` for the query syntax, then query Jira directly.')
-    if (TRACE_RE.test(e.text)) extra.push('A stack trace appears in this prompt. Search team knowledge with the exact error string: `ctx search "<error string>"`.')
+    if (JIRA_RE.test(e.text)) {
+      extra.push('A Jira key appears in this prompt. If a Jira source is declared (`ctx sources`), run `ctx howto jira` for the query syntax, then query Jira directly.')
+      await pushFeed($, 'hint', 'hint: Jira key → ctx howto jira')
+    }
+    if (TRACE_RE.test(e.text)) {
+      extra.push('A stack trace appears in this prompt. Search team knowledge with the exact error string: `ctx search "<error string>"`.')
+      await pushFeed($, 'hint', 'hint: stack trace → ctx search "<error>"')
+    }
     if (extra.length === 0) return next(e)
     return next({ ...e, context: [...(e.context ?? []), ...extra] })
   })
 
-  // Count ctx lookups Claude makes through Bash. The tool input may arrive flattened (e.command) or nested (e.input.command).
+  // One tool.call hook. Bash `ctx search|get` output is read after the tool runs (await next); file reads
+  // are listed and routed; edits and commands are checked for reuse of a fetched entry's terms, and a
+  // failing command that used an entry's term marks it suspect.
   on('tool.call', async ($, e, next) => {
-    const cmd = e.tool === 'Bash' ? (typeof e.command === 'string' ? e.command : e.input?.command ?? '') : ''
-    if (/^\s*ctx\s+(search|get|related|howto)\b/.test(cmd)) {
+    const tool = e.tool
+    const cmd = tool === 'Bash' ? String(e.command ?? e.input?.command ?? '') : ''
+    const m = /^\s*ctx\s+(search|get)\b(.*)$/s.exec(cmd)
+    if (m) {
       await update($, lookups, (n) => n + 1)
+      const result = await next(e)
+      const text = resultText(result)
+      const cards = parseCards(text)
+      const inp = parseJSON(await read($, inplay), {})
+      if (m[1] === 'search') {
+        const q = normalizeQuery(m[2])
+        const qs = parseJSON(await read($, queries), [])
+        const again = qs.includes(q)
+        await update($, queries, () => JSON.stringify([...qs, q].slice(-30)))
+        for (const c of cards) {
+          const prev = inp[c.id] ?? { reused: false, suspect: false, terms: [] }
+          inp[c.id] = { ...prev, title: c.title, how: prev.how === 'used' ? 'used' : 'found' }
+        }
+        await pushFeed($, 'search', (again ? 're-search ' : 'search ') + JSON.stringify(q) + ' → ' + (cards.map((c) => short(c.id)).join(' ') || 'nothing'))
+      } else {
+        const id = m[2].trim().split(/\s+/)[0] || ''
+        if (id) {
+          const prev = inp[id] ?? { reused: false, suspect: false }
+          inp[id] = { ...prev, title: cards[0]?.title ?? prev.title ?? id, how: 'used', terms: distinctiveTerms(text) }
+          await pushFeed($, 'get', 'get ' + short(id) + (/--section/.test(m[2]) ? ' §' : /--full/.test(m[2]) ? ' (full)' : ''))
+        }
+      }
+      await writeInplay($, inp)
       $.ui.invalidate('ui.render')
+      return result
+    }
+    if (tool === 'Read' || tool === 'Grep' || tool === 'Glob') {
+      const root = await read($, cwd)
+      const p = relative(String(e.file_path ?? e.path ?? e.input?.file_path ?? e.input?.path ?? ''), root)
+      if (p) {
+        let count = 0
+        try {
+          const r = await $.process.run([CTX, 'route', '--files', p])
+          const cards = parseCards(r.stdout)
+          count = cards.length
+          if (count) {
+            const inp = parseJSON(await read($, inplay), {})
+            for (const c of cards) if (!inp[c.id]) inp[c.id] = { title: c.title, how: 'offered', reused: false, suspect: false, terms: [] }
+            await writeInplay($, inp)
+          }
+        } catch {}
+        const list = (parseJSON(await read($, files), [])).filter((f) => f.path !== p)
+        await update($, files, () => JSON.stringify([{ path: p, pointers: count }, ...list].slice(0, FILES_CAP)))
+        await pushFeed($, 'read', tool.toLowerCase() + ' ' + p + (count ? ' (' + count + ' pointer' + (count > 1 ? 's' : '') + ')' : ''))
+        $.ui.invalidate('ui.render')
+      }
+      return next(e)
+    }
+    if (tool === 'Edit' || tool === 'Write' || tool === 'Bash') {
+      const inputText = tool === 'Bash' ? cmd : String(e.new_string ?? e.content ?? e.input?.new_string ?? e.input?.content ?? '')
+      const inp = parseJSON(await read($, inplay), {})
+      let hit = null
+      for (const [id, v] of Object.entries(inp)) {
+        if (v.how !== 'used') continue
+        const term = findReuse(v.terms, inputText)
+        if (term) {
+          hit = { id, term }
+          break
+        }
+      }
+      if (!hit) return next(e)
+      if (tool !== 'Bash') {
+        if (!inp[hit.id].reused) {
+          inp[hit.id].reused = true
+          await writeInplay($, inp)
+          await pushFeed($, 'reuse', 'reuse ' + short(hit.id) + ' ← ' + hit.term)
+          await recordFeedback($, hit.id, 'reused', hit.term + ' in ' + tool)
+          $.ui.invalidate('ui.render')
+        }
+        return next(e)
+      }
+      const result = await next(e)
+      if (isFailure(resultText(result))) {
+        inp[hit.id].suspect = true
+        await writeInplay($, inp)
+        const note = (resultText(result).split('\n').find((l) => l.trim()) || 'failed').slice(0, 120)
+        await pushFeed($, 'suspect', 'suspect ' + short(hit.id) + ' ← ' + note)
+        await recordFeedback($, hit.id, 'suspect', note)
+      } else if (!inp[hit.id].reused) {
+        inp[hit.id].reused = true
+        await writeInplay($, inp)
+        await pushFeed($, 'reuse', 'reuse ' + short(hit.id) + ' ← ' + hit.term)
+        await recordFeedback($, hit.id, 'reused', hit.term + ' in Bash')
+      }
+      $.ui.invalidate('ui.render')
+      return result
     }
     return next(e)
   })
 
   on('session.compact', async ($, e, next) => {
     await update($, compacted, () => true)
+    await update($, compactions, (n) => n + 1)
     await update($, shown, () => '')
+    await pushFeed($, 'compact', 'compacted')
     return next(e)
   })
 
   on('command.run', { command: 'ctx' }, async ($, e) => {
-    if ((e.args || '').trim() === 'explain') {
+    const arg = (e.args || '').trim()
+    if (arg === 'explain') {
       try {
-        const r = await $.process.run([CTX, 'report', '--today'])
-        return { text: r.stdout.trim() || 'ctx report: no calls today' }
+        const r = await $.process.run([CTX, 'report', '--session', 'current'])
+        return { text: r.stdout.trim() || 'ctx report: no calls this session' }
       } catch (err) {
         return { text: 'ctx report unavailable: ' + String(err) }
       }
     }
-    await $.ui.open({ id: 'ctx', title: 'ctx', focus: true, closeOnEscape: true })
+    if (arg === 'close') {
+      try {
+        await $.ui.close({ id: 'ctx' })
+      } catch {}
+      return {}
+    }
+    await $.ui.open({ id: 'ctx', title: 'ctx', columns: 48, focus: true, closeOnEscape: true })
     return {}
   })
 
@@ -116,28 +290,65 @@ export function register(on) {
     const p = await read($, pointers)
     const l = await read($, lookups)
     const i = await read($, index)
+    const f = (parseJSON(await read($, feed), [])).length
+    const used = Object.values(parseJSON(await read($, inplay), {})).filter((v) => v.how === 'used').length
+    const t = await read($, turns)
     const c = (await read($, compacted)) ? ' · compacted' : ''
-    const line = Text({ dimColor: true, wrap: 'truncate', children: ['ctx · pointers ' + p + ' · lookups ' + l + ' · index ' + i + c] })
+    const nudge = t >= 5 && (l >= 1 || p >= 1) ? ' · lessons? /ctx:promote' : ''
+    const line = Text({ dimColor: true, wrap: 'truncate', children: ['ctx · pointers ' + p + ' · used ' + used + ' · feed ' + f + ' · index ' + String(i).slice(0, 7) + c + nudge] })
     return Box({ flexDirection: 'column', children: [theirs, line] })
   })
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== 'ctx') return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const p = await read($, pointers)
-    const l = await read($, lookups)
+    const rows = e.props?.scroll?.bodyRows ?? 30
+    const items = parseJSON(await read($, feed), [])
+    const inp = parseJSON(await read($, inplay), {})
+    const fl = parseJSON(await read($, files), [])
+    const h = parseJSON(await read($, health), {})
     const i = await read($, index)
-    const recent = await read($, last)
+    const nComp = await read($, compactions)
+    // wrap: 'truncate' clips to the pane width at draw time; the full text stays in the element.
+    const line = (s) => Text({ wrap: 'truncate', children: [String(s)] })
+    const dim = (s) => Text({ dimColor: true, wrap: 'truncate', children: [String(s)] })
+    const head = (s) => Text({ bold: true, children: [s] })
+
+    const feedRows = Math.max(3, rows - 16)
+    const feedLines = items.length ? items.slice(0, feedRows).map((x) => dim(x.t + ' ' + x.text)) : [dim('no activity yet')]
+
+    const mark = (v) => (v.suspect ? '✗ suspect' : v.reused ? '✓ reused' : v.how)
+    const order = { used: 0, found: 1, offered: 2 }
+    const inLines = Object.entries(inp)
+      .sort((a, b) => (order[a[1].how] ?? 3) - (order[b[1].how] ?? 3))
+      .slice(0, 8)
+      .map(([id, v]) => line(mark(v).padEnd(9) + ' ' + short(id) + ' ' + (v.title || id)))
+
+    const fileLines = fl.slice(0, 5).map((f) => dim(f.path + (f.pointers ? ' (' + f.pointers + ' pointer' + (f.pointers > 1 ? 's' : '') + ')' : '')))
+
+    const healthLines = h.error
+      ? [line('index missing · ' + h.error)]
+      : [
+          line('MEMORY.md ' + (h.memory_lines ?? '?') + '/60 lines'),
+          line('index ' + String(i).slice(0, 7) + ' · ' + (h.index_age_days ?? '?') + ' d old · ' + (h.doc_count ?? '?') + ' entries'),
+          line('review due ' + (h.review_due ?? 0) + (nComp ? ' · compacted ×' + nComp : '')),
+        ]
+
     return Box({
       flexDirection: 'column',
       children: [
-        Text({ bold: true, children: ['Team context this session'] }),
-        Text({ children: ['pointers injected: ' + p + '   ctx lookups: ' + l + '   index: ' + i] }),
+        head('Feed'),
+        ...feedLines,
         Text({ children: [' '] }),
-        Text({ children: ['last pointers:'] }),
-        Text({ children: [recent || '(none yet)'] }),
+        head('In play (' + Object.keys(inp).length + ')'),
+        ...(inLines.length ? inLines : [dim('nothing yet')]),
         Text({ children: [' '] }),
-        Text({ dimColor: true, children: ["/ctx explain prints today's ctx report into the transcript. Esc closes."] }),
+        head('Files read (' + fl.length + ')'),
+        ...(fileLines.length ? fileLines : [dim('none yet')]),
+        Text({ children: [' '] }),
+        head('Health'),
+        ...healthLines,
+        dim('/ctx explain · /ctx close · Esc'),
       ],
     })
   })
