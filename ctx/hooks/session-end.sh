@@ -20,7 +20,7 @@ marker="$SESSIONS/$sid.reviewed"
 # User turns exclude tool results (also "user" rows); lookups are real ctx commands, not pointer text.
 turns=$(grep '"type":"user"' "$transcript" | grep -vc '"tool_result"' || true)
 lookups=$(grep -c -E '"command": *"ctx (search|get) ' "$transcript" || true)
-[ "$turns" -ge 5 ] && [ "$lookups" -ge 1 ] || exit 0
+[ "$turns" -ge "${CTX_MIN_TURNS:-5}" ] && [ "$lookups" -ge 1 ] || exit 0   # CTX_MIN_TURNS: test knob only
 : > "$marker"
 model_args=()
 [ -z "$MODEL" ] || model_args=(--model "$MODEL")
@@ -30,7 +30,7 @@ CTX_REVIEW=1 nohup "$CLAUDE" -p --resume "$sid" "/ctx:promote --auto" "${model_a
   --allowedTools "Bash(ctx *)" "Bash(git -C $HUB status*)" "Bash(git -C $HUB checkout -b promote/*)" \
     "Bash(git -C $HUB add entries/*)" "Bash(git -C $HUB commit *)" "Bash(git -C $HUB push -u origin promote/*)" \
     "Bash(gh pr create *)" "Bash(bash $HUB/scripts/validate.sh)" "Bash($HUB/scripts/validate.sh)" \
-    "Read" "Edit(//$hub_rel/entries/**)" "Write(//$hub_rel/entries/**)" \
+    "Read" "Edit(//$hub_rel/entries/**)" \
   --disallowedTools "Bash(gh api *)" "Bash(gh auth *)" "Bash(gh repo *)" "Bash(gh secret *)" "Bash(gh pr merge *)" \
     "Bash(git push --force*)" "Bash(git push -f*)" "Bash(git remote *)" "Bash(git reset *)" \
   > "$SESSIONS/$sid.review.log" 2>&1 < /dev/null &
