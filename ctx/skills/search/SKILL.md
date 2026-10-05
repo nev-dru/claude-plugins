@@ -1,10 +1,11 @@
 ---
 name: search
-description: Search the team's reviewed knowledge entries with the ctx tool. Use when a task touches a decision, convention, gotcha or runbook that may already be written down, before re-deriving it from code; also when the routing index or a pointer names an entry ID.
+description: Search the team knowledge hub (ctx) — reviewed decisions, conventions, gotchas, runbooks and setup notes. Use when asked what the hub or "our context" contains, about project instructions, conventions, standards, how we do something, or why a decision was made; when a task touches an area that may already be written down; and when a pointer names an entry ID. Search before re-deriving from code.
 allowed-tools: Bash(ctx *)
 ---
 Run searches with the `ctx` command (on PATH). It returns cards: `[ID] title (kind · scope · date)` and a summary.
 
+0. Asked what the hub contains? `ctx list` prints every active entry grouped by scope.
 1. `ctx search "<the question in plain words>"` (limit 10). Read the cards.
 2. If nothing fits, retry once with one identifier from the task (an error string, service name, env var, file path): `ctx search "<identifier>"`.
 3. Open the best card: `ctx get <ID>` (card, summary, section names). Read a section only if the summary cites the answer: `ctx get <ID> --section <name>`. Use `--full` only when the whole entry is needed.

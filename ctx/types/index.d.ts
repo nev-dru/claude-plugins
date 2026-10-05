@@ -15,6 +15,7 @@ declare module 'claude-code' {
       queries: string
       turns: number
       compactions: number
+      primed: boolean
     }
   }
 }

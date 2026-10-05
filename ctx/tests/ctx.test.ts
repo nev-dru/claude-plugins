@@ -280,3 +280,58 @@ test('reading the same file twice routes once', async ($, on) => {
   await $.tool.call({ tool: 'Read', file_path: '/work/packages/core/cache.py' })
   expect(argv.filter((a) => a[1] === 'route').length).toBe(1)
 })
+
+// ---- session pointer: installing the plugin is enough for the model to know the hub exists ----
+const STATUS = '{"build_id":"b1","doc_count":20,"active":15,"scopes":{"rufalo":7,"agents":2,"core":2},"index_age_days":0,"review_due":0,"memory_lines":3}\n'
+function statusStubs(on, argv) {
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => {
+    argv.push(e.argv)
+    if (e.argv[1] === 'status') return { value: { exitCode: 0, stdout: STATUS, stderr: '' } }
+    return { value: { exitCode: 0, stdout: e.argv[1] === 'sync' ? 'index: b1\n' : '', stderr: '' } }
+  })
+}
+
+test('the first prompt of a session carries the hub pointer; later prompts do not', async ($, on) => {
+  const argv = [], seen = []
+  statusStubs(on, argv)
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hello' })
+  await $.prompt.submit({ text: 'and again' })
+  const first = (seen[0].context ?? []).join('\n')
+  expect(first).toMatch(/Team knowledge hub \(ctx\): 15 active entries/)
+  expect(first).toMatch(/rufalo 7, agents 2, core 2/)
+  expect(first).toMatch(/ctx list/)
+  expect(first).toMatch(/ctx search/)
+  expect((seen[1].context ?? []).join('\n')).not.toMatch(/Team knowledge hub/)
+})
+
+// Re-priming after compaction (session.compact resets `primed`) is not covered here: the test kit treats
+// $.session.compact as the API call and offers no way to fire the event.
+
+test('no index means no pointer', async ($, on) => {
+  const seen = []
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status' ? '{"error":"no index found"}\n' : '', stderr: '' } }))
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hello' })
+  expect((seen[0].context ?? []).join('\n')).not.toMatch(/Team knowledge hub/)
+})
+
+test('a question about our context, conventions or instructions adds a search hint', async ($, on) => {
+  const argv = [], seen = []
+  statusStubs(on, argv)
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hello' })
+  await $.prompt.submit({ text: 'what do we have in the context hub right now?' })
+  await $.prompt.submit({ text: 'what are our conventions for tracing?' })
+  await $.prompt.submit({ text: 'fix the typo in line 3' })
+  expect((seen[1].context ?? []).join('\n')).toMatch(/ctx list|ctx search/)
+  expect((seen[2].context ?? []).join('\n')).toMatch(/ctx search/)
+  expect(seen[3].context ?? []).toEqual([])
+})

@@ -2,6 +2,10 @@
 
 A plugin (skills + a mod) over the `ctx` CLI and a team knowledge hub. It puts the right reviewed entry in front of the model when a file, error or question calls for it, shows you live what context is in play, and measures whether it earned its place.
 
+## How the model learns the hub exists
+
+Installing the plugin is enough; no AGENTS.md line is needed. On the first prompt of every session (and again after a compaction) the mod adds one line to the model's context: `Team knowledge hub (ctx): 15 active entries — rufalo 7, agents 2, … Before answering about conventions, decisions, setup, project instructions or "our context", run ctx search … (or ctx list)`. It is built from `ctx status`, so it stays current as the hub grows, and costs about 60 tokens per session. Later prompts that ask about the hub, conventions, decisions or "how do we …" get a one-line search hint.
+
 ## What you see
 
 **Band** (one line above the prompt): `ctx · pointers 3 · used 1 · feed 12 · index a002757` — pointers injected this session, entries fetched, feed events, the installed index build. `· compacted` appears after a compaction; `· lessons? /ctx:promote` appears once a session has five of your turns and at least one lookup or pointer.
@@ -42,7 +46,7 @@ Nothing asks the model "was that useful"; self-reports skew positive. Every entr
 
 ## CLI (on the Bash PATH inside Claude Code)
 
-`ctx search "q" [--kind K] [--path GLOB] [--limit N] [--history] [--json]` · `ctx get ID [--section H | --full] [--max-tokens N]` · `ctx related ID` · `ctx route --files …` · `ctx sources` · `ctx howto SOURCE` · `ctx sync [--check]` · `ctx status [--json]` · `ctx report [--today] [--json] [--session current]` · `ctx feedback ID|source:NAME reused|suspect|wrong|stale|ignored [--note TEXT]` · `ctx config auto-promote on|off` · `ctx new KIND "title"`.
+`ctx list [--all]` · `ctx search "q" [--kind K] [--path GLOB] [--limit N] [--history] [--json]` · `ctx get ID [--section H | --full] [--max-tokens N]` · `ctx related ID` · `ctx route --files …` · `ctx sources` · `ctx howto SOURCE` · `ctx sync [--check]` · `ctx status [--json]` · `ctx report [--today] [--json] [--session current]` · `ctx feedback ID|source:NAME reused|suspect|wrong|stale|ignored [--note TEXT]` · `ctx config auto-promote on|off` · `ctx new KIND "title"`.
 
 `bin/ctx` is a shim that downloads the pinned release binary (`bin/ctx.version`) from the hub and verifies its checksum. The hub is private; `gh` must be authenticated.
 

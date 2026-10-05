@@ -17,6 +17,7 @@ const health = atom({ plugin: 'ctx', key: 'health' }, '{}')
 const queries = atom({ plugin: 'ctx', key: 'queries' }, '[]')
 const turns = atom({ plugin: 'ctx', key: 'turns' }, 0)
 const compactions = atom({ plugin: 'ctx', key: 'compactions' }, 0)
+const primed = atom({ plugin: 'ctx', key: 'primed' }, false)
 
 const FEED_CAP = 40
 const INPLAY_CAP = 60
@@ -26,6 +27,8 @@ const FILES_CAP = 30
 const PATH_RE = /(?:^|[\s"'`(\[])((?:\.{0,2}\/)?[\w.-]+(?:\/[\w.-]+)+\.[A-Za-z0-9]+)/g
 // Project keys are letters only; common technical tokens shaped like keys (SHA-256, UTF-8, RFC-7231) are excluded.
 const JIRA_RE = /\b(?!(?:UTF|SHA|ISO|RFC|GPT|AES|CVE|MD|HTTP|TLS|RSA|CRC|IEEE|ECMA|RTX|GTX|ARM|X)-)[A-Z][A-Z]{1,9}-\d+\b/
+// A question about team knowledge itself: what the hub holds, our conventions/decisions, project instructions.
+const KNOWLEDGE_RE = /\b(context hub|knowledge hub|the hub|team (knowledge|context)|our (context|conventions?|decisions?|setup|standards?|practices?|instructions?)|project instructions?|conventions?|what do we (know|have)|how do we|ctx)\b/i
 const TRACE_RE = /Traceback \(most recent call last\)|\n\s+at .+\(.+:\d+:\d+\)|panic: /
 
 // Paths named in the prompt, made relative to the session cwd so dragged-in absolute paths still route.
@@ -120,6 +123,22 @@ export function register(on) {
   on('prompt.submit', async ($, e, next) => {
     await update($, turns, (n) => n + 1)
     const extra = []
+    // Standing pointer, once per session and again after compaction: installing the plugin is all it
+    // takes for the model to know the hub exists and when to search it (no AGENTS.md line needed).
+    if (!(await read($, primed))) {
+      const h = parseJSON(await read($, health), {})
+      if (!h.error && h.active > 0) {
+        const scopes = Object.entries(h.scopes ?? {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => k + ' ' + n).join(', ')
+        extra.push('Team knowledge hub (ctx): ' + h.active + ' active entries — ' + scopes + '. ' +
+          'Reviewed decisions, conventions, gotchas and runbooks live there, not in this repo. ' +
+          'Before answering about conventions, decisions, setup, project instructions or "our context", run `ctx search "<question>"` (or `ctx list` to see everything), then `ctx get <ID>`.')
+        await update($, primed, () => true)
+        await pushFeed($, 'pointer', 'hub pointer injected (' + h.active + ' entries)')
+      }
+    } else if (KNOWLEDGE_RE.test(String(e.text ?? ''))) {
+      extra.push('This reads as a question about team knowledge: check the hub first with `ctx search "<question>"` or `ctx list`.')
+      await pushFeed($, 'hint', 'hint: team-knowledge question → ctx search')
+    }
     const root = await read($, cwd)
     const named = pathsIn(e.text, root)
     if (named.length > 0) {
@@ -261,6 +280,7 @@ export function register(on) {
   on('session.compact', async ($, e, next) => {
     await update($, compacted, () => true)
     await update($, compactions, (n) => n + 1)
+    await update($, primed, () => false)
     await update($, shown, () => '')
     await pushFeed($, 'compact', 'compacted')
     return next(e)
