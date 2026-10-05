@@ -32,12 +32,21 @@ claude-docs:
 
 **Band** (one line above the prompt): `ctx · pointers 3 · used 1 · feed 12 · index a002757` — pointers injected this session, entries fetched, feed events, the installed index build. `· compacted` appears after a compaction; `· lessons? /ctx:promote` appears once a session has five of your turns and at least one lookup or pointer.
 
-**`/ctx`** opens the live pane beside the transcript (`Esc` or `/ctx close` closes it):
+**`/ctx`** opens a compact live pane (10 rows; `Esc` or `/ctx close` closes it):
 
-- **Feed** — newest first: `pointer ×2 ← src/pay/client.go`, `search "retry key" → F0A F0C`, `get F0A §`, `read packages/core/cache.py (1 pointer)`, `reuse F0A ← Idempotency-Key`, `suspect F0C ← Exit code 1 …`, `compacted`.
-- **In play** — every entry this session touched and how far it got: `offered` (a pointer), `found` (a search hit), `used` (`ctx get`), `✓ reused` (its terms appeared in a later edit or command), `✗ suspect` (a command using its terms failed).
-- **Files read** — what Read/Grep/Glob touched, with the pointers that matched.
-- **Health** — `MEMORY.md` lines against the 60-line cap, index build and age, entries past their review date, compactions.
+```
+ctx · index 729b50c · 0d · 15 entries · review due 0
+L1 3.7k · L2 6 rules · L3 1 used/3 found · L5 claude-docs 1 · L6 MEMORY 4/60 · L7 4 files
+✓ reused  6N  Python is pinned to 3.12
+offered   6Q  Prompt cache: build_prefix assembles the stable prefix…
+04:37 search "python version" → 6N 6P ×2
+04:32 hub pointer injected (15 entries)
+```
+
+- Line 1: the installed index, its age, active entries, entries past their review date.
+- Line 2, one number per layer: L1 standing instructions (tokens of AGENTS.md/CLAUDE.md in this repo), L2 path rules, L3 hub entries used/found this session, L5 queries per other source, L6 MEMORY.md lines against the 60-line cap, L7 files read.
+- Entries in play (up to four): `✓ reused` (its terms appeared in a later edit or command), `✗ suspect` (a command using it failed), `used` (`ctx get`), `found` (search hit), `offered` (pointer).
+- The newest events; a repeat bumps `×n` instead of adding a line. Empty sections are not shown.
 
 **`/ctx explain`** prints this session's `ctx report` into the transcript.
 

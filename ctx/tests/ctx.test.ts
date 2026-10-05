@@ -167,11 +167,40 @@ test('reading a file lists it and asks ctx route for pointers', async ($, on) =>
 
 
 // ---- pane and band (Task 3) ----
-test('pane renders with empty state', async ($, on) => {
+test('pane renders with empty state and hides empty sections', async ($, on) => {
   on('ui.open', () => ({ value: { isPlaced: true } }))
   const ui = await $.ui.mount(PANE)
-  expect(await ui.find({ type: 'Text', text: /Feed/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /no activity yet/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /nothing yet|none yet|In play|Files read|Health/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('pane shows the layer strip from ctx status', async ($, on) => {
+  const argv = []
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status'
+    ? '{"build_id":"729b50cabc","active":15,"scopes":{"rufalo":7},"index_age_days":0,"review_due":0,"memory_lines":4,"l1_tokens":3666,"l2_rules":6,"sources":[{"name":"claude-docs","tier":"personal","description":"docs","command":"vex"}]}\n'
+    : 'index: 729b50cabc\n', stderr: '' } }))
+  on('tool.call', () => ({ result: 'ok' }))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Read', file_path: '/work/a.py' })
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /^ctx · index 729b50c · 0d · 15 entries · review due 0$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /L1 3\.7k · L2 6 rules · L3 0 used\/0 found · L5 claude-docs 0 · L6 MEMORY 4\/60 · L7 1 file/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('repeated feed events collapse into one line with a count', async ($, on) => {
+  const argv = []
+  stubs(on, argv)
+  on('tool.call', () => ({ result: SEARCH_OUT }))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get 01J9ZK3Q7R8M2V5X1B4N6D8F0A' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get 01J9ZK3Q7R8M2V5X1B4N6D8F0A' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get 01J9ZK3Q7R8M2V5X1B4N6D8F0A' })
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /get 8F0A ×3$/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -185,7 +214,7 @@ test('pane shows health from ctx status and the band shows the lessons nudge aft
   await $.tool.call({ tool: 'Bash', command: 'ctx search "retries"' })
   for (let i = 0; i < 5; i++) await $.prompt.submit({ text: 'turn ' + i })
   const ui = await $.ui.mount(PANE)
-  expect(await ui.find({ type: 'Text', text: /MEMORY\.md 12\/60/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /MEMORY 12\/60/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /review due 1/ })).toBeDefined()
   await ui.unmount()
   const band = await $.ui.mount({ plugin: 'ctx', component: 'AbovePrompt', requestId: 'One instance', surface: 'terminal',

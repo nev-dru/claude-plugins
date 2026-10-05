@@ -96,6 +96,12 @@ async function writeInplay($, inp) {
 async function pushFeed($, kind, text) {
   const items = parseJSON(await read($, feed), [])
   const t = new Date().toISOString().slice(11, 16)
+  // The same event again (a repeated hint, the same get) bumps a count instead of adding a line.
+  if (items[0] && items[0].text === text) {
+    items[0] = { ...items[0], t, n: (items[0].n ?? 1) + 1 }
+    await update($, feed, () => JSON.stringify(items))
+    return
+  }
   await update($, feed, () => JSON.stringify([{ t, kind, text }, ...items].slice(0, FEED_CAP)))
 }
 
@@ -342,7 +348,7 @@ export function register(on) {
       } catch {}
       return {}
     }
-    await $.ui.open({ id: 'ctx', title: 'ctx', columns: 48, focus: true, closeOnEscape: true })
+    await $.ui.open({ id: 'ctx', title: 'ctx', rows: 10, columns: 60, focus: true, closeOnEscape: true })
     return {}
   })
 
@@ -362,62 +368,52 @@ export function register(on) {
     return Box({ flexDirection: 'column', children: [theirs, line] })
   })
 
+  // The pane: two fixed lines (status, one strip across every layer), entries in play when there are any,
+  // then the newest feed events. Empty sections are omitted.
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== 'ctx') return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const rows = e.props?.scroll?.bodyRows ?? 30
-    const items = parseJSON(await read($, feed), [])
+    const rows = e.props?.scroll?.bodyRows ?? 10
+    const items = parseJSON(await read($, feed), []).filter(Boolean)
     const inp = parseJSON(await read($, inplay), {})
-    const fl = parseJSON(await read($, files), [])
+    const fl = parseJSON(await read($, files), []).filter((f) => f && f.path)
     const h = parseJSON(await read($, health), {})
-    const i = await read($, index)
-    const nComp = await read($, compactions)
+    const i = String(await read($, index))
     const su = parseJSON(await read($, srcUse), {})
-    // wrap: 'truncate' clips to the pane width at draw time; the full text stays in the element.
+    const nComp = await read($, compactions)
     const line = (s) => Text({ wrap: 'truncate', children: [String(s)] })
     const dim = (s) => Text({ dimColor: true, wrap: 'truncate', children: [String(s)] })
-    const head = (s) => Text({ bold: true, children: [s] })
+    const k = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n ?? '?'))
 
-    const feedRows = Math.max(3, rows - 16)
-    const feedLines = items.length ? items.filter(Boolean).slice(0, feedRows).map((x) => dim((x.t ?? '') + ' ' + (x.text ?? ''))) : [dim('no activity yet')]
+    const entries = Object.entries(inp).filter(([, v]) => v && typeof v === 'object')
+    const used = entries.filter(([, v]) => v.how === 'used').length
+    const found = entries.filter(([, v]) => v.how === 'found' || v.how === 'used').length
+    const head = h.error
+      ? 'ctx · index missing · ' + h.error
+      : 'ctx · index ' + i.slice(0, 7) + ' · ' + (h.index_age_days ?? '?') + 'd · ' + (h.active ?? h.doc_count ?? '?') + ' entries · review due ' + (h.review_due ?? 0) +
+        (nComp ? ' · compacted ×' + nComp : '')
+    const srcs = Array.isArray(h.sources) ? h.sources.filter((x) => x && x.name) : []
+    const strip = [
+      'L1 ' + k(h.l1_tokens),
+      'L2 ' + (h.l2_rules ?? 0) + ' rules',
+      'L3 ' + used + ' used/' + found + ' found',
+      'L5 ' + (srcs.length ? srcs.map((x) => x.name + ' ' + (su[x.name] ?? 0)).join(' ') : 'none'),
+      'L6 MEMORY ' + (h.memory_lines ?? '?') + '/60',
+      'L7 ' + fl.length + (fl.length === 1 ? ' file' : ' files'),
+    ].join(' · ')
 
     const mark = (v) => (v.suspect ? '✗ suspect' : v.reused ? '✓ reused' : v.how)
     const order = { used: 0, found: 1, offered: 2 }
-    const inLines = Object.entries(inp)
-      .filter(([, v]) => v && typeof v === 'object')
-      .sort((a, b) => (order[a[1].how] ?? 3) - (order[b[1].how] ?? 3))
-      .slice(0, 8)
-      .map(([id, v]) => line(mark(v).padEnd(9) + ' ' + short(id) + ' ' + (v.title || id)))
+    const inLines = entries
+      .sort((a, b) => (b[1].reused || b[1].suspect ? 1 : 0) - (a[1].reused || a[1].suspect ? 1 : 0) || (order[a[1].how] ?? 3) - (order[b[1].how] ?? 3))
+      .slice(0, 4)
+      .map(([id, v]) => line(mark(v).padEnd(9) + ' ' + short(id) + '  ' + (v.title || id)))
 
-    const fileLines = fl.filter((f) => f && f.path).slice(0, 5).map((f) => dim(f.path + (f.pointers ? ' (' + f.pointers + ' pointer' + (f.pointers > 1 ? 's' : '') + ')' : '')))
+    const feedRows = Math.max(2, rows - 2 - inLines.length)
+    const feedLines = items.length
+      ? items.slice(0, feedRows).map((x) => dim((x.t ?? '') + ' ' + (x.text ?? '') + (x.n > 1 ? ' ×' + x.n : '')))
+      : [dim('no activity yet · /ctx explain for the report · Esc closes')]
 
-    const healthLines = h.error
-      ? [line('index missing · ' + h.error)]
-      : [
-          line('MEMORY.md ' + (h.memory_lines ?? '?') + '/60 lines'),
-          line('index ' + String(i).slice(0, 7) + ' · ' + (h.index_age_days ?? '?') + ' d old · ' + (h.doc_count ?? '?') + ' entries'),
-          line('review due ' + (h.review_due ?? 0) + (nComp ? ' · compacted ×' + nComp : '')),
-          line('sources ' + (Array.isArray(h.sources) && h.sources.length
-            ? h.sources.filter((x) => x && x.name).map((x) => x.name + ' ' + (su[x.name] ?? 0)).join(' · ')
-            : 'none declared')),
-        ]
-
-    return Box({
-      flexDirection: 'column',
-      children: [
-        head('Feed'),
-        ...feedLines,
-        Text({ children: [' '] }),
-        head('In play (' + Object.keys(inp).length + ')'),
-        ...(inLines.length ? inLines : [dim('nothing yet')]),
-        Text({ children: [' '] }),
-        head('Files read (' + fl.length + ')'),
-        ...(fileLines.length ? fileLines : [dim('none yet')]),
-        Text({ children: [' '] }),
-        head('Health'),
-        ...healthLines,
-        dim('/ctx explain · /ctx close · Esc'),
-      ],
-    })
+    return Box({ flexDirection: 'column', children: [line(head), dim(strip), ...inLines, ...feedLines] })
   })
 }
