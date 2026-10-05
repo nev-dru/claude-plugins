@@ -472,3 +472,19 @@ test('the session pointer describes the personal layer and how to remember somet
   expect(ctx).toMatch(/Personal layer on this machine: 38 projects \(with their Claude memory\), 2 personal entries/)
   expect(ctx).toMatch(/ctx new --local/)
 })
+
+
+test('the pointer asks for a search first on questions about projects, tools, the user or past work', async ($, on) => {
+  const seen = []
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status'
+    ? '{"build_id":"b1","active":19,"scopes":{"rufalo":6},"personal_projects":38,"personal_entries":0}\n'
+    : e.argv[1] === 'sync' && e.argv[2] === '--check' ? 'index: b1\n' : '', stderr: '' } }))
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hi' })
+  await $.prompt.submit({ text: 'tell me about the ROI project' })
+  expect((seen[0].context ?? []).join('\n')).toMatch(/a project, a tool, the user or earlier work.*before reading files/)
+  expect((seen[1].context ?? []).join('\n')).toMatch(/ctx search/)
+})

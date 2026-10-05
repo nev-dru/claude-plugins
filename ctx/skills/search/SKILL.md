@@ -1,6 +1,6 @@
 ---
 name: search
-description: Search the team knowledge hub (ctx) — reviewed decisions, conventions, gotchas, runbooks and setup notes. Use when asked what the hub or "our context" contains, about project instructions, conventions, standards, how we do something, or why a decision was made; when a task touches an area that may already be written down; and when a pointer names an entry ID. Search before re-deriving from code.
+description: Search the context layers with ctx — the team hub (decisions, conventions, gotchas, runbooks, project catalog) and this machine's personal layer (personal notes, where projects live, Claude memory from every project). Use when asked about a project, a tool, the user or earlier work; when asked what the hub or "our context" contains, about project instructions, conventions, standards, how we do something, or why a decision was made; when a task touches an area that may already be written down; and when a pointer names an entry ID. Search before re-deriving from code.
 allowed-tools: Bash(ctx *)
 ---
 Run searches with the `ctx` command (on PATH). It returns cards: `[ID] title (kind · scope · date)` and a summary.

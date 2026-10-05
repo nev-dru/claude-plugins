@@ -30,7 +30,7 @@ const PATH_RE = /(?:^|[\s"'`(\[])((?:\.{0,2}\/)?[\w.-]+(?:\/[\w.-]+)+\.[A-Za-z0-
 // Project keys are letters only; common technical tokens shaped like keys (SHA-256, UTF-8, RFC-7231) are excluded.
 const JIRA_RE = /\b(?!(?:UTF|SHA|ISO|RFC|GPT|AES|CVE|MD|HTTP|TLS|RSA|CRC|IEEE|ECMA|RTX|GTX|ARM|X)-)[A-Z][A-Z]{1,9}-\d+\b/
 // A question about team knowledge itself: what the hub holds, our conventions/decisions, project instructions.
-const KNOWLEDGE_RE = /\b(context hub|knowledge hub|the hub|team (knowledge|context)|our (context|conventions?|decisions?|setup|standards?|practices?|instructions?)|project instructions?|conventions?|what do we (know|have)|how do we|ctx)\b/i
+const KNOWLEDGE_RE = /\b(context hub|knowledge hub|the hub|team (knowledge|context)|our (context|conventions?|decisions?|setup|standards?|practices?|instructions?)|project instructions?|conventions?|what do we (know|have)|how do we|ctx|tell me about|what (is|was|are) (the|my|our)|projects?|remember|last time|earlier session|do you know)\b/i
 const TRACE_RE = /Traceback \(most recent call last\)|\n\s+at .+\(.+:\d+:\d+\)|panic: /
 
 // Paths named in the prompt, made relative to the session cwd so dragged-in absolute paths still route.
@@ -204,13 +204,13 @@ export function register(on) {
         const scopes = Object.entries(h.scopes ?? {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => k + ' ' + n).join(', ')
         extra.push('Team knowledge hub (ctx): ' + h.active + ' active entries — ' + scopes + '. ' +
           'Reviewed decisions, conventions, gotchas and runbooks live there, not in this repo. ' +
-          'Before answering about conventions, decisions, setup, project instructions or "our context", run `ctx search "<question>"` (or `ctx list` to see everything), then `ctx get <ID>`.' +
+          'Before answering about conventions, decisions, setup, project instructions, "our context", or a project, a tool, the user or earlier work, run `ctx search "<question>"` before reading files (or `ctx list` to see everything), then `ctx get <ID>`.' +
           personalLine(h) + otherSourcesLine(h))
         await update($, primed, () => true)
         await pushFeed($, 'pointer', 'hub pointer injected (' + h.active + ' entries)')
       }
     } else if (KNOWLEDGE_RE.test(String(e.text ?? ''))) {
-      extra.push('This reads as a question about team knowledge: check the hub first with `ctx search "<question>"` or `ctx list`.')
+      extra.push('This reads as a question the context layers may answer (team hub, project catalog, personal layer, Claude memory from other projects): run `ctx search "<question>"` before reading files.')
       await pushFeed($, 'hint', 'hint: team-knowledge question → ctx search')
     }
     const root = await read($, cwd)
