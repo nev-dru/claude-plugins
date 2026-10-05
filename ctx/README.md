@@ -15,6 +15,8 @@ ctx describes other sources but never wraps them; the model queries each tool di
 - The session pointer lists every source available on this machine; `ctx sources` shows all of them, installed or not.
 - When a Bash command queries a source (its binary, plus `match:` text when several sources share one), the feed shows it and `ctx report` counts it under `sources`.
 
+Step-by-step guide with the full field reference: `docs/adding-sources.md` in the hub repository.
+
 Example personal entry:
 
 ```yaml
