@@ -205,3 +205,78 @@ test('/ctx close closes the pane', async ($, on) => {
   expect(r.text).toBeUndefined()
   expect(calls.length).toBe(1)
 })
+
+// ---- fix pass ----
+test('a read-only probe that exits 1 does not mark the entry suspect', async ($, on) => {
+  const argv = []
+  stubs(on, argv)
+  on('tool.call', ($, e) => {
+    if (e.tool !== 'Bash') return { result: 'ok' }
+    if (/ctx get/.test(e.command)) return { result: GET_OUT }
+    return { result: 'Exit code 1' }
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get 01J9ZK3Q7R8M2V5X1B4N6D8F0A' })
+  await $.tool.call({ tool: 'Bash', command: 'grep -rn "Idempotency-Key" src/' })
+  expect(argv.find((a) => a[1] === 'feedback')).toBeUndefined()
+})
+
+test('other ctx commands are lookups or nothing, never reuse', async ($, on) => {
+  const argv = []
+  stubs(on, argv)
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['other band'] }))
+  on('tool.call', ($, e) => ({ result: e.tool === 'Bash' && /ctx get/.test(e.command) ? GET_OUT : 'ok' }))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get 01J9ZK3Q7R8M2V5X1B4N6D8F0A' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx feedback 01J9ZK3Q7R8M2V5X1B4N6D8F0A wrong --note "Idempotency-Key rejected with 400"' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx related 01J9ZK3Q7R8M2V5X1B4N6D8F0A' })
+  expect(argv.find((a) => a[1] === 'feedback')).toBeUndefined()
+  const band = await $.ui.mount({ plugin: 'ctx', component: 'AbovePrompt', requestId: 'One instance', surface: 'terminal',
+    viewport: { columns: 120, rows: 40 }, props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
+  expect(await band.find({ type: 'Text', text: /used 1/ })).toBeDefined()
+  await band.unmount()
+})
+
+test('ctx get with flags before the id marks the id, and a failed get marks nothing', async ($, on) => {
+  const argv = []
+  stubs(on, argv)
+  on('tool.call', ($, e) => {
+    if (e.tool !== 'Bash') return { result: 'ok' }
+    if (/ctx get --section/.test(e.command)) return { result: GET_OUT }
+    return { result: 'ctx: no entry XXXX' }
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get --section Do 01J9ZK3Q7R8M2V5X1B4N6D8F0A' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get XXXX' })
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /used +8F0A/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /--section/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /XXXX/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('every used entry whose term appears is marked reused, not only the first', async ($, on) => {
+  const argv = []
+  stubs(on, argv)
+  const GET_C = '[01J9ZK3Q7R8M2V5X1B4N6D8F0C] Retries use exponential backoff  (convention · payments-api · 2026-09-20)\nAlso send Idempotency-Key.\n'
+  on('tool.call', ($, e) => {
+    if (e.tool !== 'Bash') return { result: 'ok' }
+    return { result: /F0C/.test(e.command) ? GET_C : GET_OUT }
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get 01J9ZK3Q7R8M2V5X1B4N6D8F0A' })
+  await $.tool.call({ tool: 'Bash', command: 'ctx get 01J9ZK3Q7R8M2V5X1B4N6D8F0C' })
+  await $.tool.call({ tool: 'Edit', file_path: 'x.go', old_string: 'a', new_string: 'h.Set("Idempotency-Key", k)' })
+  const ids = argv.filter((a) => a[1] === 'feedback').map((a) => a[2]).sort()
+  expect(ids).toEqual(['01J9ZK3Q7R8M2V5X1B4N6D8F0A', '01J9ZK3Q7R8M2V5X1B4N6D8F0C'])
+})
+
+test('reading the same file twice routes once', async ($, on) => {
+  const argv = []
+  stubs(on, argv)
+  on('tool.call', () => ({ result: 'file contents' }))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Read', file_path: '/work/packages/core/cache.py' })
+  await $.tool.call({ tool: 'Read', file_path: '/work/packages/core/cache.py' })
+  expect(argv.filter((a) => a[1] === 'route').length).toBe(1)
+})

@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import { parseCards, distinctiveTerms, findReuse, isFailure, normalizeQuery } from './signals.js'
+import { parseCards, distinctiveTerms, findReuse, isFailure, failureNote, isReadOnlyProbe, ctxCommand, firstULID, normalizeQuery } from './signals.js'
 
 // Session counters shown in the band and the /ctx pane. Declared in types/index.d.ts.
 const pointers = atom({ plugin: 'ctx', key: 'pointers' }, 0)
@@ -156,35 +156,40 @@ export function register(on) {
     return next({ ...e, context: [...(e.context ?? []), ...extra] })
   })
 
-  // One tool.call hook. Bash `ctx search|get` output is read after the tool runs (await next); file reads
-  // are listed and routed; edits and commands are checked for reuse of a fetched entry's terms, and a
-  // failing command that used an entry's term marks it suspect.
+  // One tool.call hook. Bash `ctx search|get` output is read after the tool runs (await next); other ctx
+  // commands are never scored; file reads are listed and routed once; edits and commands are checked for
+  // reuse of a fetched entry's terms, and a failing (non-probe) command that used a term marks it suspect.
   on('tool.call', async ($, e, next) => {
     const tool = e.tool
     const cmd = tool === 'Bash' ? String(e.command ?? e.input?.command ?? '') : ''
-    const m = /^\s*ctx\s+(search|get)\b(.*)$/s.exec(cmd)
-    if (m) {
+    const c = tool === 'Bash' ? ctxCommand(cmd) : null
+    if (c) {
+      if (c.sub === 'related' || c.sub === 'howto') await update($, lookups, (n) => n + 1)
+      if (c.sub !== 'search' && c.sub !== 'get') return next(e)
       await update($, lookups, (n) => n + 1)
       const result = await next(e)
       const text = resultText(result)
       const cards = parseCards(text)
       const inp = parseJSON(await read($, inplay), {})
-      if (m[1] === 'search') {
-        const q = normalizeQuery(m[2])
+      if (c.sub === 'search') {
+        const q = normalizeQuery(c.rest)
         const qs = parseJSON(await read($, queries), [])
         const again = qs.includes(q)
         await update($, queries, () => JSON.stringify([...qs, q].slice(-30)))
-        for (const c of cards) {
-          const prev = inp[c.id] ?? { reused: false, suspect: false, terms: [] }
-          inp[c.id] = { ...prev, title: c.title, how: prev.how === 'used' ? 'used' : 'found' }
+        for (const card of cards) {
+          const prev = inp[card.id] ?? { reused: false, suspect: false, terms: [] }
+          inp[card.id] = { ...prev, title: card.title, how: prev.how === 'used' ? 'used' : 'found' }
         }
-        await pushFeed($, 'search', (again ? 're-search ' : 'search ') + JSON.stringify(q) + ' → ' + (cards.map((c) => short(c.id)).join(' ') || 'nothing'))
+        await pushFeed($, 'search', (again ? 're-search ' : 'search ') + JSON.stringify(q) + ' → ' + (cards.map((x) => short(x.id)).join(' ') || 'nothing'))
       } else {
-        const id = m[2].trim().split(/\s+/)[0] || ''
+        // A get that printed no card (bad id, no index) marks nothing.
+        const id = cards[0]?.id ?? (cards.length ? null : null)
         if (id) {
           const prev = inp[id] ?? { reused: false, suspect: false }
-          inp[id] = { ...prev, title: cards[0]?.title ?? prev.title ?? id, how: 'used', terms: distinctiveTerms(text) }
-          await pushFeed($, 'get', 'get ' + short(id) + (/--section/.test(m[2]) ? ' §' : /--full/.test(m[2]) ? ' (full)' : ''))
+          inp[id] = { ...prev, title: cards[0].title, how: 'used', terms: distinctiveTerms(text) }
+          await pushFeed($, 'get', 'get ' + short(id) + (/--section/.test(c.rest) ? ' §' : /--full/.test(c.rest) ? ' (full)' : ''))
+        } else {
+          await pushFeed($, 'get', 'get ' + (firstULID(c.rest) ? short(firstULID(c.rest)) : '?') + ' → no entry')
         }
       }
       await writeInplay($, inp)
@@ -195,60 +200,58 @@ export function register(on) {
       const root = await read($, cwd)
       const p = relative(String(e.file_path ?? e.path ?? e.input?.file_path ?? e.input?.path ?? ''), root)
       if (p) {
-        let count = 0
-        try {
-          const r = await $.process.run([CTX, 'route', '--files', p])
-          const cards = parseCards(r.stdout)
-          count = cards.length
-          if (count) {
-            const inp = parseJSON(await read($, inplay), {})
-            for (const c of cards) if (!inp[c.id]) inp[c.id] = { title: c.title, how: 'offered', reused: false, suspect: false, terms: [] }
-            await writeInplay($, inp)
-          }
-        } catch {}
-        const list = (parseJSON(await read($, files), [])).filter((f) => f.path !== p)
-        await update($, files, () => JSON.stringify([{ path: p, pointers: count }, ...list].slice(0, FILES_CAP)))
+        const list = parseJSON(await read($, files), [])
+        const known = list.find((f) => f && f.path === p)
+        let count = known ? known.pointers : 0
+        if (!known) {
+          try {
+            const r = await $.process.run([CTX, 'route', '--files', p])
+            const cards = parseCards(r.stdout)
+            count = cards.length
+            if (count) {
+              const inp = parseJSON(await read($, inplay), {})
+              for (const card of cards) if (!inp[card.id]) inp[card.id] = { title: card.title, how: 'offered', reused: false, suspect: false, terms: [] }
+              await writeInplay($, inp)
+            }
+          } catch {}
+        }
+        await update($, files, () => JSON.stringify([{ path: p, pointers: count }, ...list.filter((f) => f && f.path !== p)].slice(0, FILES_CAP)))
         await pushFeed($, 'read', tool.toLowerCase() + ' ' + p + (count ? ' (' + count + ' pointer' + (count > 1 ? 's' : '') + ')' : ''))
         $.ui.invalidate('ui.render')
       }
       return next(e)
     }
     if (tool === 'Edit' || tool === 'Write' || tool === 'Bash') {
+      // grep/ls/cat/diff and friends check an entry rather than apply it: neither reuse nor suspect.
+      if (tool === 'Bash' && isReadOnlyProbe(cmd)) return next(e)
       const inputText = tool === 'Bash' ? cmd : String(e.new_string ?? e.content ?? e.input?.new_string ?? e.input?.content ?? '')
       const inp = parseJSON(await read($, inplay), {})
-      let hit = null
+      // Every fetched entry whose term appears is credited, so ranking does not depend on fetch order.
+      const hits = []
       for (const [id, v] of Object.entries(inp)) {
-        if (v.how !== 'used') continue
+        if (!v || v.how !== 'used') continue
         const term = findReuse(v.terms, inputText)
-        if (term) {
-          hit = { id, term }
-          break
-        }
+        if (term) hits.push({ id, term })
       }
-      if (!hit) return next(e)
-      if (tool !== 'Bash') {
-        if (!inp[hit.id].reused) {
+      if (hits.length === 0) return next(e)
+      const result = await next(e)
+      const text = resultText(result)
+      const failed = tool === 'Bash' && isFailure(text)
+      const edited = tool !== 'Bash' && isFailure(text) // an Edit whose result reports failure did not apply the entry
+      if (edited) return result
+      for (const hit of hits) {
+        if (failed) {
+          inp[hit.id].suspect = true
+          const note = failureNote(text)
+          await pushFeed($, 'suspect', 'suspect ' + short(hit.id) + ' ← ' + note)
+          await recordFeedback($, hit.id, 'suspect', note)
+        } else if (!inp[hit.id].reused) {
           inp[hit.id].reused = true
-          await writeInplay($, inp)
           await pushFeed($, 'reuse', 'reuse ' + short(hit.id) + ' ← ' + hit.term)
           await recordFeedback($, hit.id, 'reused', hit.term + ' in ' + tool)
-          $.ui.invalidate('ui.render')
         }
-        return next(e)
       }
-      const result = await next(e)
-      if (isFailure(resultText(result))) {
-        inp[hit.id].suspect = true
-        await writeInplay($, inp)
-        const note = (resultText(result).split('\n').find((l) => l.trim()) || 'failed').slice(0, 120)
-        await pushFeed($, 'suspect', 'suspect ' + short(hit.id) + ' ← ' + note)
-        await recordFeedback($, hit.id, 'suspect', note)
-      } else if (!inp[hit.id].reused) {
-        inp[hit.id].reused = true
-        await writeInplay($, inp)
-        await pushFeed($, 'reuse', 'reuse ' + short(hit.id) + ' ← ' + hit.term)
-        await recordFeedback($, hit.id, 'reused', hit.term + ' in Bash')
-      }
+      await writeInplay($, inp)
       $.ui.invalidate('ui.render')
       return result
     }
@@ -291,7 +294,7 @@ export function register(on) {
     const l = await read($, lookups)
     const i = await read($, index)
     const f = (parseJSON(await read($, feed), [])).length
-    const used = Object.values(parseJSON(await read($, inplay), {})).filter((v) => v.how === 'used').length
+    const used = Object.values(parseJSON(await read($, inplay), {})).filter((v) => v && v.how === 'used').length
     const t = await read($, turns)
     const c = (await read($, compacted)) ? ' · compacted' : ''
     const nudge = t >= 5 && (l >= 1 || p >= 1) ? ' · lessons? /ctx:promote' : ''
@@ -315,16 +318,17 @@ export function register(on) {
     const head = (s) => Text({ bold: true, children: [s] })
 
     const feedRows = Math.max(3, rows - 16)
-    const feedLines = items.length ? items.slice(0, feedRows).map((x) => dim(x.t + ' ' + x.text)) : [dim('no activity yet')]
+    const feedLines = items.length ? items.filter(Boolean).slice(0, feedRows).map((x) => dim((x.t ?? '') + ' ' + (x.text ?? ''))) : [dim('no activity yet')]
 
     const mark = (v) => (v.suspect ? '✗ suspect' : v.reused ? '✓ reused' : v.how)
     const order = { used: 0, found: 1, offered: 2 }
     const inLines = Object.entries(inp)
+      .filter(([, v]) => v && typeof v === 'object')
       .sort((a, b) => (order[a[1].how] ?? 3) - (order[b[1].how] ?? 3))
       .slice(0, 8)
       .map(([id, v]) => line(mark(v).padEnd(9) + ' ' + short(id) + ' ' + (v.title || id)))
 
-    const fileLines = fl.slice(0, 5).map((f) => dim(f.path + (f.pointers ? ' (' + f.pointers + ' pointer' + (f.pointers > 1 ? 's' : '') + ')' : '')))
+    const fileLines = fl.filter((f) => f && f.path).slice(0, 5).map((f) => dim(f.path + (f.pointers ? ' (' + f.pointers + ' pointer' + (f.pointers > 1 ? 's' : '') + ')' : '')))
 
     const healthLines = h.error
       ? [line('index missing · ' + h.error)]
