@@ -11,3 +11,4 @@ Run searches with the `ctx` command (on PATH). It returns cards: `[ID] title (ki
 4. A card marked superseded names its replacement; use that ID. A card marked disputed is contested: say so when you rely on it.
 5. For sources other than the hub (Jira, Koi, Confluence): `ctx sources`, then `ctx howto <source>` for that tool's syntax; call that tool directly.
 6. Stop after three searches. Say what was not found; do not invent an entry.
+7. If an entry told you something that proved false in this session (a command failed, a path did not exist, a value was wrong), record it with the evidence: `ctx feedback <ID> wrong --note "<what happened>"`. Do not record "useful"; usefulness is measured from what you do with the entry.
