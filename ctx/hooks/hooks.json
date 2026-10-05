@@ -1,4 +1,17 @@
 {
-  "description": "ctx mod: route pointers, source hints, band and /ctx",
-  "modules": ["./register.js"]
+  "description": "ctx mod: route pointers, live view, usage signals, /ctx; SessionEnd hook for the opt-in session review",
+  "modules": ["./register.js"],
+  "hooks": {
+    "SessionEnd": [
+      {
+        "matcher": "prompt_input_exit|other|logout",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-end.sh"
+          }
+        ]
+      }
+    ]
+  }
 }
