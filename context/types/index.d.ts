@@ -7,6 +7,7 @@ declare module 'claude-code' {
       index: string
       compacted: boolean
       last: string
+      cwd: string
     }
   }
 }

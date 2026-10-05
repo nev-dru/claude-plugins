@@ -68,3 +68,23 @@ test('ctx lookups in Bash commands are counted', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /ctx lookups: 1/ })).toBeDefined()
   await ui.unmount()
 })
+
+test('SHA-256 and UTF-8 do not trigger the Jira hint', async ($, on) => {
+  let seen
+  on('prompt.submit', ($, e) => { seen = e; return { text: e.text } })
+  await $.prompt.submit({ text: 'compute the SHA-256 of the UTF-8 bytes and compare with RFC-7231' })
+  expect(seen.context ?? []).toEqual([])
+})
+
+test('absolute paths under the session cwd are routed relative to it', async ($, on) => {
+  const argv = []
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => { argv.push(e.argv); return { value: { exitCode: 0, stdout: '', stderr: '' } } })
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'look at /work/src/pay/client.go please' })
+  const routeCall = argv.find((a) => a[1] === 'route')
+  expect(routeCall).toBeDefined()
+  expect(routeCall.slice(3)).toEqual(['src/pay/client.go'])
+})

@@ -7,15 +7,22 @@ const shown = atom({ plugin: 'context', key: 'shown' }, '')
 const index = atom({ plugin: 'context', key: 'index' }, '?')
 const compacted = atom({ plugin: 'context', key: 'compacted' }, false)
 const last = atom({ plugin: 'context', key: 'last' }, '')
+const cwd = atom({ plugin: 'context', key: 'cwd' }, '')
 
 // Deterministic signals in a prompt: a file path, a Jira key, a stack trace.
 const PATH_RE = /(?:^|[\s"'`(\[])((?:\.{0,2}\/)?[\w.-]+(?:\/[\w.-]+)+\.[A-Za-z0-9]+)/g
-const JIRA_RE = /\b[A-Z][A-Z0-9]{1,9}-\d+\b/
+// Project keys are letters only; common technical tokens shaped like keys (SHA-256, UTF-8, RFC-7231) are excluded.
+const JIRA_RE = /\b(?!(?:UTF|SHA|ISO|RFC|GPT|AES|CVE|MD|HTTP|TLS|RSA|CRC|IEEE|ECMA|RTX|GTX|ARM|X)-)[A-Z][A-Z]{1,9}-\d+\b/
 const TRACE_RE = /Traceback \(most recent call last\)|\n\s+at .+\(.+:\d+:\d+\)|panic: /
 
-function pathsIn(text) {
+// Paths named in the prompt, made relative to the session cwd so dragged-in absolute paths still route.
+function pathsIn(text, root) {
   const out = new Set()
-  for (const m of text.matchAll(PATH_RE)) out.add(m[1])
+  for (const m of String(text ?? '').matchAll(PATH_RE)) {
+    let p = m[1]
+    if (root && p.startsWith(root + '/')) p = p.slice(root.length + 1)
+    out.add(p)
+  }
   return [...out].slice(0, 20)
 }
 
@@ -32,6 +39,7 @@ const CTX = ctxBin()
 
 export function register(on) {
   on('session.start', async ($, e, next) => {
+    await update($, cwd, () => (typeof e.cwd === 'string' ? e.cwd.replace(/\/+$/, '') : ''))
     try {
       const r = await $.process.run([CTX, 'sync', '--check'])
       const line = r.stdout.trim()
@@ -47,7 +55,7 @@ export function register(on) {
 
   on('prompt.submit', async ($, e, next) => {
     const extra = []
-    const files = pathsIn(e.text)
+    const files = pathsIn(e.text, await read($, cwd))
     if (files.length > 0) {
       try {
         const r = await $.process.run([CTX, 'route', '--files', ...files])
