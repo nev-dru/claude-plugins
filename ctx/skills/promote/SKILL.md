@@ -22,7 +22,7 @@ ctx-promote cleanup "$WT"                   # always, including when you stop ea
 
 ## Without an argument: review this session
 1. List what this session used: `ctx report --session current`. Note entries marked suspect or wrong, and the zero-result searches (missing entries).
-2. Scan the conversation and `MEMORY.md` for durable lessons: a decision made, a gotcha hit twice, a convention someone stated, a runbook step that was missing, and things the user said about themselves or how they work. Keep team and personal items in separate lists.
+2. Scan the conversation and `MEMORY.md` for durable lessons: a decision made, a gotcha hit twice, a convention someone stated, a runbook step that was missing, research done this session (it belongs in a dated `docs/research/` file; its conclusions are candidates), and things the user said about themselves or how they work. Keep team and personal items in separate lists.
 3. Propose 0–3 team candidates and any personal ones, one line each with the reason it is durable. In interactive mode, stop and let the user pick. With `--auto`, take only team candidates, and start each factual sentence you could not verify with `CONFIRM:`.
 4. Route each candidate with the intake guide: read `intake.md` next to this skill (decision table first, layer details when unsure). State the destination and a one-line reason for each.
    - This skill writes to the **hub** (steps 7–8), **repo docs** (step 6), the **personal layer** (`ctx new --local <kind> "<title>"`, fill the file, then `ctx local refresh --background`), and, only after the user confirms the exact line, the **global `~/.claude/CLAUDE.md`** or the repo's **`CLAUDE.local.md`**.

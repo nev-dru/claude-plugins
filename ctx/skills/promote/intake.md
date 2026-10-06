@@ -15,6 +15,7 @@ Read this before routing any lesson, note, decision or fact. Every piece of cont
 | 4c | …a fact or preference about the user that matters in many projects but only sometimes (hobbies, schedule, how their manager likes reports, tools they prefer)? | **Personal layer** | `ctx new --local <preference\|fact\|note> "<title>"`, fill the file, then `ctx local refresh --background`. Searched by `ctx search` from every project; never published. |
 | 4d | …something learned while working in this one project (its quirks, the user's habits there)? | **L6 Claude project memory** | Claude Code's own memory for this project (it writes it); the personal layer's project map points other sessions at it. |
 | 5 | Does every session in this repo need it, as one line — an exact command, a repo-wide prohibition, a version warning, a gotcha that bites everyone? | **L1 standing instructions** | `AGENTS.md` (owners approve via MR). Never model-written: propose the line, a human adds it. |
+| 5b | Is it **research** — sources read, options compared, findings for a question being planned or designed? | **Repo research doc** | `docs/research/YYYY-MM-DD-<topic>.md` in the project's repo, frontmatter `title`, `date` (when researched), `question`, `status` (current/superseded), `sources` (each with the date read). Indexed into the personal layer, so any session finds it with its age. Its durable *conclusions* are routed again with this table (usually step 9 or step 6), citing the file and keeping its date. |
 | 6 | Would it have to change in the same commit as this repo's code — architecture, module layout, where code goes, commands beyond the everyday ones, test or CI setup, this repo's own ADRs? | **Repo reference docs** | `docs/<topic>.md` in the repo, plus one link line in AGENTS.md: `- <topic>: docs/<topic>.md (read when <trigger>)`. |
 | 7 | Does doing it need a script or a tool call, not just knowledge? | **L4 procedure** | A skill (SKILL.md + scripts) in a plugin; humans review via MR. |
 | 8 | Is it already authoritative somewhere else — a Confluence page, a Jira ticket, an API's own docs, a code graph? | **L5 external source** | Leave it there. Declare the system once in `sources.yaml` + `howto/<name>.md` if it is not declared yet. Add a hub `reference` entry only when it must surface for certain file paths. |
@@ -81,11 +82,18 @@ Prefer a second occurrence before promoting anything out of L6 or L7: one-off le
 - **Belongs:** the task: plan, TODO, decisions taken *for this task*, what is left, MR description, ticket comments.
 - **Leaves L7 only when** a lesson recurs or outlives the task: then route it with the table above.
 
+### Research (`docs/research/`)
+- **Belongs:** the working evidence behind a plan or design: what was read, compared and found, with dates. Long and specific; not loaded anywhere until searched.
+- **Always dated:** the filename starts with the research date and the frontmatter repeats it; each source carries the date it was read. Search cards show the age and flag research older than 90 days.
+- **Superseding:** newer research on the same question gets a new dated file; the old one gets `status: superseded` and a line naming the newer file and why.
+- **Conclusions move on:** a cross-repo decision becomes a hub `decision` whose `sources` include the research file's git URL and whose `date` is the research date; a fact about an external tool becomes a hub `reference` or `gotcha`; something tied to one repo goes to that repo's docs or ADR.
+
 ## Moving context between layers
 
 | From → to | When |
 |---|---|
 | L7 → L6/L3/repo docs | A lesson outlives the task (second occurrence, or clearly durable). |
+| research → L3/repo docs | A research doc reaches a conclusion others will rely on: promote the conclusion, cite the file, keep its date. |
 | L6 → L3 | The same lesson turns out to matter to others (second occurrence) — `/ctx:promote`. |
 | L1 → repo docs | AGENTS.md is over its 2k budget, or a section is reference rather than rule: move it, leave one link line. |
 | L3 → repo docs | A hub entry turns out to describe one repo's code: move it into that repo's `docs/`, mark the hub entry `deprecated` with a pointer to the file. |
