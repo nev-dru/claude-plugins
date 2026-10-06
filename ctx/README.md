@@ -80,7 +80,7 @@ Every session on a machine reads the same local index (`~/.config/ctx/hub/index.
 
 - `/ctx:search` — the search loop (`ctx search` → `ctx get` → section), with the rule to flag false entries with evidence.
 - `/ctx:promote <lesson>` — route one lesson; a hub entry is committed and pushed straight to main (undo with `git revert`).
-- `/ctx:promote` (no argument) — review this session: lists what was used, proposes 0–3 durable lessons, turns suspect/wrong flags into `disputed` corrections; after you confirm, commits and pushes to main. Empty is a valid result.
+- `/ctx:promote` (no argument) — review this session: lists what was used, proposes every durable lesson (no count limit; duplicates become updates), grouped by destination for you to pick, turns suspect/wrong flags into `disputed` corrections; after you confirm, commits and pushes to main. Empty is a valid result.
 
 ## Session-close review (off by default)
 

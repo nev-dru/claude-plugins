@@ -536,3 +536,14 @@ test('a successful personal get shows as a personal get in the feed', async ($, 
   expect(await ui.find({ type: 'Text', text: /no entry/ })).toBeUndefined()
   await ui.unmount()
 })
+
+test('a new index build with unchanged entries does not announce a hub update', async ($, on) => {
+  const argv = [], seen = [], state = { build: 'b1', active: 31 }
+  refreshStubs(on, argv, state)
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'first' })
+  state.build = 'b2' // new code release, same entries
+  await $.prompt.submit({ text: 'second' })
+  expect((seen[1].context ?? []).join('\n')).not.toMatch(/Team hub updated/)
+})

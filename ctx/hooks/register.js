@@ -180,6 +180,9 @@ async function refreshIndex($, root, remote) {
     await update($, health, () => '{"error":"ctx unavailable"}')
   }
   const newHealth = parseJSON(await read($, health), {})
+  // A new build whose entries are unchanged (a code-only release, or the CI copy of a local build) is not news.
+  if (oldHealth.entries_hash && oldHealth.entries_hash === newHealth.entries_hash) return null
+  if (!oldHealth.entries_hash && oldHealth.active === newHealth.active && before !== '?') return null
   return { from: before, to: id, was: oldHealth.active, now: newHealth.active }
 }
 
