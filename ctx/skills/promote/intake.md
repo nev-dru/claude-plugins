@@ -19,6 +19,7 @@ Read this before routing any lesson, note, decision or fact. Every piece of cont
 | 6 | Would it have to change in the same commit as this repo's code — architecture, module layout, where code goes, commands beyond the everyday ones, test or CI setup, this repo's own ADRs? | **Repo reference docs** | `docs/<topic>.md` in the repo, plus one link line in AGENTS.md: `- <topic>: docs/<topic>.md (read when <trigger>)`. |
 | 7 | Does doing it need a script or a tool call, not just knowledge? | **L4 procedure** | A skill (SKILL.md + scripts) in a plugin; humans review via MR. |
 | 8 | Is it already authoritative somewhere else — a Confluence page, a Jira ticket, an API's own docs, a code graph? | **L5 external source** | Leave it there. Declare the system once in `sources.yaml` + `howto/<name>.md` if it is not declared yet. Add a hub `reference` entry only when it must surface for certain file paths. |
+| 8b | Is it true only on one particular computer — its folder layout, hardware and memory, the tools one person installed, or one person's list of repos? | **Personal layer** | `ctx new --local fact "<title>"`. If a general rule sits inside it ("any repo in an iCloud-synced folder…"), that rule can still go to the hub, written machine-independently (L3 below); the specifics stay personal. |
 | 9 | Otherwise: a fact, decision, convention, gotcha or procedure that spans repos or is not tied to one repo's code. | **L3 team hub** | `ctx new <kind>` → draft PR. Its `applies_to` paths generate **L2** pointers automatically. |
 
 Prefer a second occurrence before promoting anything out of L6 or L7: one-off lessons stay where they happened.
@@ -45,11 +46,12 @@ Prefer a second occurrence before promoting anything out of L6 or L7: one-off le
 - **Example:** `docs/architecture.md` — "Model access goes through `rufalo.providers`; agents never import an SDK directly."
 
 ### L3 — Team hub (`entries/<ULID>.md`)
-- **Belongs:** decisions and their why when they constrain more than one repo, team conventions, gotchas about shared tools, machines or services, incident lessons, runbooks for shared systems, references that must be path-routed.
+- **Belongs:** decisions and their why when they constrain more than one repo, team conventions, gotchas about shared tools, services or a *kind* of machine setup (any Mac syncing ~/Documents to iCloud), never about one particular machine; incident lessons, runbooks for shared systems, references that must be path-routed.
 - **Signals:** "we decided", "our convention", "this bit us on two projects", "anyone using X should know".
 - **Kinds:** `decision` (with sources), `convention`, `gotcha` (with applies_to), `how-to`, `runbook` (with applies_to), `reference` (with sources).
 - **Lifecycle:** replacing an entry → `supersedes:` + old one `deprecated`; contested → `disputed` with evidence; never edit without evidence.
-- **Example:** "Imports of rufalo.* vanish after uv sync: iCloud hides .pth files" — a machine gotcha that bites any Python repo under iCloud Drive.
+- **Machine-independent:** every teammate's machine differs, so before writing an entry rewrite: home paths and one person's folder layout → placeholders (`<repo>`, `<synced folder>`, `<new root>`); one person's list of repos or tools → a count, or nothing; hardware, memory and locally installed tools → the condition that triggers the problem ("when Docker Desktop holds port 4317"). Keep a measurement only when it describes the shared tool, not the machine it ran on. The specifics, if worth keeping, go to the personal layer.
+- **Example:** "Imports of rufalo.* vanish after uv sync: iCloud hides .pth files" — a gotcha about a kind of machine setup (any Python repo in an iCloud-synced folder), not about one machine.
 
 ### L4 — Procedures (skills)
 - **Belongs:** work that needs a script, a tool call or a fixed sequence the model must execute: `promote`, a release checklist with commands, a migration helper.
