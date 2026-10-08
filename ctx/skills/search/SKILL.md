@@ -5,8 +5,8 @@ allowed-tools: Bash(ctx *)
 ---
 Run searches with the `ctx` command (on PATH). It returns cards: `[ID] title (kind · scope · date)` and a summary.
 
-0. Asked what the hub contains? `ctx list` prints every active entry grouped by scope.
-1. `ctx search "<the question in plain words>"` (limit 10). Read the cards.
+0. Asked what the hub contains? `ctx list` prints every active entry grouped by scope. Everything about one project: `ctx list --repo <repo>` (entries tagged `repo:<repo>` or a `path:<repo>//…` glob); a theme across repos: `ctx list --label domain=<x>` or `--label initiative=<y>`.
+1. `ctx search "<the question in plain words>"` (limit 10). Read the cards. When the question is about the repo you are working in and the hub is large, add `--repo <repo>` to search only its entries (a scoped search leaves out personal results).
 2. If nothing fits, retry once with one identifier from the task (an error string, service name, env var, file path): `ctx search "<identifier>"`.
 3. Open the best card: `ctx get <ID>` (card, summary, section names). Read a section only if the summary cites the answer: `ctx get <ID> --section <name>`. Use `--full` only when the whole entry is needed.
 4. A card marked superseded names its replacement; use that ID. A card marked disputed is contested: say so when you rely on it.

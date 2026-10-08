@@ -88,7 +88,7 @@ Every session on a machine reads the same local index (`~/.config/ctx/hub/index.
 
 ## CLI (on the Bash PATH inside Claude Code)
 
-`ctx list [--all]` · `ctx search "q" [--kind K] [--path GLOB] [--limit N] [--history] [--json]` · `ctx get ID [--section H | --full] [--max-tokens N]` · `ctx related ID` · `ctx route --files …` · `ctx sources` · `ctx howto SOURCE` · `ctx sync [--check]` · `ctx status [--json]` · `ctx report [--today] [--json] [--session current]` · `ctx feedback ID|source:NAME reused|suspect|wrong|stale|ignored [--note TEXT]` · `ctx config auto-promote on|off` · `ctx new KIND "title"`.
+`ctx list [--all] [--repo R] [--label facet=value]… [--kind K]` · `ctx search "q" [--repo R] [--label facet=value]… [--kind K] [--path GLOB] [--limit N] [--history] [--json]` · `ctx get ID [--section H | --full] [--max-tokens N]` · `ctx related ID` · `ctx route --files …` · `ctx sources` · `ctx howto SOURCE` · `ctx sync [--check]` · `ctx status [--json]` · `ctx report [--today] [--json] [--session current]` · `ctx feedback ID|source:NAME reused|suspect|wrong|stale|ignored [--note TEXT]` · `ctx config auto-promote on|off` · `ctx new KIND "title"`.
 
 `bin/ctx` is a shim that downloads the pinned release binary (`bin/ctx.version`) from the hub and verifies its checksum. The hub is private; `gh` must be authenticated.
 
