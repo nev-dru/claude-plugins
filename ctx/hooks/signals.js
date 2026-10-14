@@ -1,7 +1,10 @@
 // Pure helpers for the ctx mod's usage signals. No Claude Code API here, so they test in isolation.
 // An entry key is hub/ID or hub:path (ctx hub list); cards from before hubs used a bare ULID.
 const KEY = '[a-z0-9][a-z0-9-]{0,39}(?:/[^\\s\\]]+|:[^\\s\\]]+)'
-const CARD_RE = new RegExp('^\\[(' + KEY + '|[0-9A-HJKMNP-TV-Z]{26})\\] (.+?)(?:  \\(|\\s+→|$)', 'gm')
+// Inside a card's brackets a key may hold spaces (Obsidian vault paths).
+const CARD_KEY = '[a-z0-9][a-z0-9-]{0,39}(?:/|:)[^\\]\\n]+'
+const CARD_RE = new RegExp('^\\[(' + CARD_KEY + '|[0-9A-HJKMNP-TV-Z]{26})\\] (.+?)(?:  \\(|\\s+→|$)', 'gm')
+const QUOTED_KEY_RE = /["']([a-z0-9][a-z0-9-]{0,39}[:/][^"'\n]+)["']/
 const ULID_RE = /\b[0-9A-HJKMNP-TV-Z]{26}\b/
 const REF_TOKEN_RE = new RegExp('^(?:' + KEY + '|[0-9A-HJKMNP-TV-Z]{26})$')
 // Keys are not evidence of reuse: hub/ULID and hub:<path>.md (a path like docs/ci.md still counts).
@@ -82,6 +85,8 @@ export function ctxCommand(cmd) {
 
 // The first entry reference (key or bare ULID) among the words of a ctx command's arguments.
 export function firstRef(text) {
+  const q = QUOTED_KEY_RE.exec(String(text ?? '')) // a quoted key may hold spaces
+  if (q) return q[1]
   for (const w of String(text ?? '').split(/\s+/)) {
     const t = w.replace(/^["']|["']$/g, '')
     if (REF_TOKEN_RE.test(t)) return t

@@ -91,3 +91,13 @@ test('parseCards and firstRef read hub keys', async () => {
   expect(firstRef('--section Do team/01J9ZK3Q7R8M2V5X1B4N6D8F0A')).toBe('team/01J9ZK3Q7R8M2V5X1B4N6D8F0A')
   expect(distinctiveTerms('see team/01J9ZK3Q7R8M2V5X1B4N6D8F0A and docs/ci.md')).toEqual(['docs/ci.md'])
 })
+
+test('vault keys with spaces are read from cards and from quoted ctx get arguments', async () => {
+  const out = '[vault:Area 19/My Note 1759.md] My note  (note · vault · 2026-10-01 · 2w)\ns\n\n[team/01J9ZK3Q7R8M2V5X1B4N6D8F0A] Billing retries  (gotcha · payments-api · 2026-09-14 · 3w)\n'
+  expect(parseCards(out)).toEqual([
+    { id: 'vault:Area 19/My Note 1759.md', title: 'My note' },
+    { id: 'team/01J9ZK3Q7R8M2V5X1B4N6D8F0A', title: 'Billing retries' },
+  ])
+  expect(firstRef('"vault:Area 19/My Note 1759.md" --section Do')).toBe('vault:Area 19/My Note 1759.md')
+  expect(firstRef("--full 'vault:Area 19/My Note.md'")).toBe('vault:Area 19/My Note.md')
+})
