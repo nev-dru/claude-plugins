@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseCards, distinctiveTerms, findReuse, isFailure, failureNote, isReadOnlyProbe, ctxCommand, firstULID, normalizeQuery } from '../hooks/signals.js'
+import { parseCards, distinctiveTerms, findReuse, isFailure, failureNote, isReadOnlyProbe, ctxCommand, firstULID, firstRef, normalizeQuery } from '../hooks/signals.js'
 
 test('parseCards reads ctx search and get output', async () => {
   const out = '[01J9ZK3Q7R8M2V5X1B4N6D8F0A] Billing retries are not idempotent  (gotcha · payments-api · 2026-09-14)\nRetrying POST /charges…\n\n[01J9ZK3Q7R8M2V5X1B4N6D8F0C] Retries use exponential backoff  (convention · payments-api · 2026-09-20)\n'
@@ -79,4 +79,15 @@ test('ctxCommand parses the first ctx invocation only', async () => {
   expect(ctxCommand('ctx feedback ID wrong --note x')).toEqual({ sub: 'feedback', rest: 'ID wrong --note x' })
   expect(ctxCommand('echo ctx search')).toBeNull()
   expect(firstULID('--section Do 01J9ZK3Q7R8M2V5X1B4N6D8F0A')).toBe('01J9ZK3Q7R8M2V5X1B4N6D8F0A')
+})
+
+test('parseCards and firstRef read hub keys', async () => {
+  const out = '[team/01J9ZK3Q7R8M2V5X1B4N6D8F0A] Billing retries  (gotcha · payments-api · 2026-09-14 · 3w)\ns\n\n' +
+    '[claude-memory:-Users-x-dev-rufalow/memory/vex.md] vex static models  (reference · rufalow memory · 2026-09-02 · 5w)\n'
+  expect(parseCards(out)).toEqual([
+    { id: 'team/01J9ZK3Q7R8M2V5X1B4N6D8F0A', title: 'Billing retries' },
+    { id: 'claude-memory:-Users-x-dev-rufalow/memory/vex.md', title: 'vex static models' },
+  ])
+  expect(firstRef('--section Do team/01J9ZK3Q7R8M2V5X1B4N6D8F0A')).toBe('team/01J9ZK3Q7R8M2V5X1B4N6D8F0A')
+  expect(distinctiveTerms('see team/01J9ZK3Q7R8M2V5X1B4N6D8F0A and docs/ci.md')).toEqual(['docs/ci.md'])
 })

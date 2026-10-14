@@ -180,14 +180,14 @@ test('pane shows the layer strip from ctx status', async ($, on) => {
   on('session.start', () => ({ cwd: '/work' }))
   on('command.register', () => ({ value: undefined }))
   on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status'
-    ? '{"build_id":"729b50cabc","active":15,"scopes":{"rufalo":7},"index_age_days":0,"review_due":0,"memory_lines":4,"l1_tokens":3666,"l2_rules":6,"global_claude_tokens":1656,"personal_projects":38,"personal_entries":2,"sources":[{"name":"claude-docs","tier":"personal","description":"docs","command":"vex"}]}\n'
+    ? '{"build_id":"729b50cabc","active":15,"scopes":{"rufalo":7},"index_age_days":0,"review_due":0,"memory_lines":4,"l1_tokens":3666,"l2_rules":6,"global_claude_tokens":1656,"personal_projects":38,"personal_entries":2,"sources":[{"name":"claude-docs","tier":"personal","description":"docs","command":"vex"}],"hubs":[{"name":"team","visibility":"team","notes":15,"state":"ok"},{"name":"personal","visibility":"private","notes":40,"state":"ok"},{"name":"payments","visibility":"team","notes":3,"state":"offline"},{"name":"claude-docs","visibility":"private","format":"query","state":"query"}]}\n'
     : 'index: 729b50cabc\n', stderr: '' } }))
   on('tool.call', () => ({ result: 'ok' }))
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await $.tool.call({ tool: 'Read', file_path: '/work/a.py' })
   const ui = await $.ui.mount(PANE)
   expect(await ui.find({ type: 'Text', text: /^ctx · index 729b50c · 0d · 15 entries · review due 0$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /L1 3\.7k · global 1\.7k · L2 6 rules · L3 0 used\/0 found · L5 claude-docs 0 · L6 MEMORY 4\/60 · personal 38 projects, 2 notes · L7 1 file/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /L1 3\.7k · global 1\.7k · L2 6 rules · L3 0 used\/0 found · L5 claude-docs 0 · L6 MEMORY 4\/60 · hubs team 15 · personal 40 · payments 3 \(offline\) · claude-docs q · L7 1 file/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -420,16 +420,16 @@ function refreshStubs(on, argv, state) {
   })
 }
 
-test('session start asks GitHub for a newer index without touching the repo', async ($, on) => {
+test('session start syncs hubs in the background without touching the repo', async ($, on) => {
   const argv = [], state = { build: 'b1', active: 15 }
   refreshStubs(on, argv, state)
   on('prompt.submit', ($, e) => ({ text: e.text }))
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
-  expect(argv.some((a) => a.slice(1).join(' ').startsWith('sync --if-newer --no-views'))).toBe(true)
+  expect(argv.some((a) => a.slice(1).join(' ') === 'sync --no-views --background')).toBe(true)
   await $.prompt.submit({ text: 'one' })
   await $.prompt.submit({ text: 'two' })
   // the remote check is throttled; the local check runs every prompt
-  expect(argv.filter((a) => a[2] === '--if-newer').length).toBe(1)
+  expect(argv.filter((a) => a.slice(1).join(' ') === 'sync --no-views --background').length).toBe(1)
   expect(argv.filter((a) => a.slice(1).join(' ') === 'sync --check').length).toBeGreaterThanOrEqual(3)
 })
 
@@ -451,28 +451,41 @@ test('an index synced by another session is noticed, shown, and told to the mode
 
 
 // ---- personal layer ----
-test('session start refreshes the personal layer in the background', async ($, on) => {
+test('session start no longer runs a separate personal refresh', async ($, on) => {
   const argv = [], state = { build: 'b1', active: 15 }
   refreshStubs(on, argv, state)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
-  expect(argv.some((a) => a.slice(1).join(' ') === 'local refresh --background')).toBe(true)
+  expect(argv.some((a) => a[1] === 'local')).toBe(false)
 })
 
-test('the session pointer describes the personal layer and how to remember something', async ($, on) => {
+test('the session pointer lists the other hubs and how to remember something', async ($, on) => {
   const seen = []
   on('session.start', () => ({ cwd: '/work' }))
   on('command.register', () => ({ value: undefined }))
   on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status'
-    ? '{"build_id":"b1","active":19,"scopes":{"rufalo":6},"personal_projects":38,"personal_entries":2}\n'
+    ? '{"build_id":"b1","active":19,"scopes":{"rufalo":6},"hubs":[{"name":"team","visibility":"team","notes":19},{"name":"personal","visibility":"private","notes":40},{"name":"claude-memory","visibility":"private","notes":60},{"name":"claude-docs","visibility":"private","format":"query","state":"query"}]}\n'
     : e.argv[1] === 'sync' && e.argv[2] === '--check' ? 'index: b1\n' : '', stderr: '' } }))
   on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await $.prompt.submit({ text: 'hi' })
   const ctx = (seen[0].context ?? []).join('\n')
-  expect(ctx).toMatch(/Personal layer on this machine: 38 projects \(with their Claude memory\), 2 personal entries/)
+  expect(ctx).toMatch(/Other hubs on this machine: personal 40 · claude-memory 60 · claude-docs \(query\)/)
   expect(ctx).toMatch(/ctx new --local/)
 })
 
+
+test('a machine with only personal hubs still gets a pointer', async ($, on) => {
+  const seen = []
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status'
+    ? '{"build_id":"b1","active":0,"hubs":[{"name":"vault","visibility":"private","notes":12}]}\n'
+    : e.argv[1] === 'sync' && e.argv[2] === '--check' ? 'index: b1\n' : '', stderr: '' } }))
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hi' })
+  expect((seen[0].context ?? []).join('\n')).toMatch(/Other hubs on this machine: vault 12/)
+})
 
 test('the pointer asks for a search first on questions about projects, tools, the user or past work', async ($, on) => {
   const seen = []
@@ -522,7 +535,7 @@ test('the remote check runs in the background', async ($, on) => {
   const argv = [], state = { build: 'b1', active: 15 }
   refreshStubs(on, argv, state)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
-  expect(argv.some((a) => a.slice(1).join(' ') === 'sync --if-newer --no-views --background')).toBe(true)
+  expect(argv.some((a) => a.slice(1).join(' ') === 'sync --no-views --background')).toBe(true)
 })
 
 test('a successful personal get shows as a personal get in the feed', async ($, on) => {

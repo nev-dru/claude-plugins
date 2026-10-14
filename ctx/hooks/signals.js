@@ -1,13 +1,18 @@
 // Pure helpers for the ctx mod's usage signals. No Claude Code API here, so they test in isolation.
-const CARD_RE = /^\[([0-9A-HJKMNP-TV-Z]{26})\] (.+?)(?:  \(|\s+→|$)/gm
+// An entry key is hub/ID or hub:path (ctx hub list); cards from before hubs used a bare ULID.
+const KEY = '[a-z0-9][a-z0-9-]{0,39}(?:/[^\\s\\]]+|:[^\\s\\]]+)'
+const CARD_RE = new RegExp('^\\[(' + KEY + '|[0-9A-HJKMNP-TV-Z]{26})\\] (.+?)(?:  \\(|\\s+→|$)', 'gm')
 const ULID_RE = /\b[0-9A-HJKMNP-TV-Z]{26}\b/
+const REF_TOKEN_RE = new RegExp('^(?:' + KEY + '|[0-9A-HJKMNP-TV-Z]{26})$')
+// Keys are not evidence of reuse: hub/ULID and hub:<path>.md (a path like docs/ci.md still counts).
+const KEY_TERM_RE = /^(?:[a-z0-9][a-z0-9-]{0,39}\/[0-9A-HJKMNP-TV-Z]{26}|[a-z0-9][a-z0-9-]{0,39}:\S+\.md)$/
 // File names present in nearly every repository: seeing one in an edit says nothing about an entry.
 const UBIQUITOUS = new Set(['CLAUDE.md', 'AGENTS.md', 'README.md', 'MEMORY.md', 'pyproject.toml', 'package.json', 'package-lock.json',
   'Makefile', 'go.mod', 'go.sum', 'Cargo.toml', 'Dockerfile', 'docker-compose.yml', '.gitignore', '.env', 'tsconfig.json', 'requirements.txt', 'setup.py', 'uv.lock'])
 // Commands whose non-zero exit means "not found", not "failed": they never make an entry suspect.
 const READ_ONLY = new Set(['grep', 'rg', 'ag', 'ack', 'diff', 'cmp', 'test', '[', '[[', 'find', 'ls', 'cat', 'head', 'tail', 'which', 'type', 'stat', 'wc', 'file', 'tree', 'jq', 'awk', 'sed', 'sort', 'uniq'])
 
-// Cards as `ctx search` / `ctx get` / `ctx route` print them: `[ULID] title  (kind · scope · date)` or `[ULID] title → ctx get ULID`.
+// Cards as `ctx search` / `ctx get` / `ctx route` print them: `[key] title  (kind · scope · date · age)` or `[key] title → ctx get key`.
 export function parseCards(text) {
   const out = []
   for (const m of String(text ?? '').matchAll(CARD_RE)) out.push({ id: m[1], title: m[2].trim() })
@@ -23,6 +28,7 @@ export function distinctiveTerms(text) {
     const t = raw.replace(/^[.\-/<>=]+|[.\-/]+$/g, '')
     if (t.length < 3 || seen.has(t) || !/[A-Za-z]/.test(t)) continue
     if (/^[0-9A-HJKMNP-TV-Z]{26}$/.test(t)) continue // entry ids are not evidence of reuse
+    if (KEY_TERM_RE.test(t)) continue // entry keys are not evidence of reuse
     if (UBIQUITOUS.has(t) || UBIQUITOUS.has(t.split('/').pop())) continue
     const shaped = /[_\-./]/.test(t) || /\d/.test(t) || /[a-z][A-Z]/.test(t)
     if (shaped) seen.add(t)
@@ -74,10 +80,17 @@ export function ctxCommand(cmd) {
   return { sub: m[1], rest: m[2].trim() }
 }
 
-export function firstULID(text) {
+// The first entry reference (key or bare ULID) among the words of a ctx command's arguments.
+export function firstRef(text) {
+  for (const w of String(text ?? '').split(/\s+/)) {
+    const t = w.replace(/^["']|["']$/g, '')
+    if (REF_TOKEN_RE.test(t)) return t
+  }
   const m = ULID_RE.exec(String(text ?? ''))
   return m ? m[0] : null
 }
+
+export const firstULID = firstRef // older name
 
 export function normalizeQuery(q) {
   return String(q ?? '').replace(/["']/g, '').trim().toLowerCase().replace(/\s+/g, ' ')

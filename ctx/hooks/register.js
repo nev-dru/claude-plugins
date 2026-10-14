@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import { parseCards, distinctiveTerms, findReuse, isFailure, failureNote, isReadOnlyProbe, ctxCommand, firstULID, normalizeQuery } from './signals.js'
+import { parseCards, distinctiveTerms, findReuse, isFailure, failureNote, isReadOnlyProbe, ctxCommand, firstRef, normalizeQuery } from './signals.js'
 
 // Session counters shown in the band and the /ctx pane. Declared in types/index.d.ts.
 const pointers = atom({ plugin: 'ctx', key: 'pointers' }, 0)
@@ -40,12 +40,13 @@ function pathsIn(text, root) {
   return [...out].slice(0, 20)
 }
 
-// The personal layer: this machine only, searched by the same ctx search.
-function personalLine(h) {
-  const p = h.personal_projects ?? 0
-  const n = h.personal_entries ?? 0
-  if (!p && !n) return ''
-  return ' Personal layer on this machine: ' + p + ' projects (with their Claude memory), ' + n + ' personal entries — `ctx search` covers it too, labelled personal; `ctx get <path>` reads a memory file it lists. ' +
+// The hubs besides the team hub: personal notes, Claude memory, repo research, project hubs, query hubs.
+function hubsLine(h) {
+  const list = Array.isArray(h.hubs) ? h.hubs.filter((x) => x && x.name && x.visibility !== 'team') : []
+  if (list.length === 0) return ''
+  const desc = list.map((x) => x.name + (x.format === 'query' ? ' (query)' : ' ' + (x.notes ?? 0))).join(' · ')
+  return ' Other hubs on this machine: ' + desc + ' — `ctx search` covers them too; cards show the hub in the key ' +
+    '(personal/01M…, claude-memory:<path>), `ctx get <key>` reads one, `--hub <name>` searches one hub. ' +
     'To remember something about the user across all projects, run `ctx new --local <preference|fact|note> "<title>"` and fill in the file it prints.'
 }
 
@@ -126,7 +127,8 @@ function resultText(result) {
 }
 
 function short(id) {
-  return id.slice(-4)
+  const s = String(id)
+  return s.includes(':') ? s.split('/').pop().replace(/\.md$/, '').slice(0, 14) : s.slice(-4)
 }
 
 async function recordFeedback($, id, verdict, note) {
@@ -144,11 +146,8 @@ async function refreshIndex($, root, remote) {
   if (remote) {
     await update($, lastRemote, () => Date.now())
     try {
-      await $.process.run([CTX, 'sync', '--if-newer', '--no-views', '--background'], { timeoutMs: 5000 }) // detached; --check sees the result
-    } catch {}
-    try {
-      // Personal layer (project map, Claude memory, personal entries): detached, returns at once.
-      await $.process.run([CTX, 'local', 'refresh', '--background'], { timeoutMs: 5000 })
+      // Fetch every git hub and rebuild the index; detached, returns at once (--check sees the result).
+      await $.process.run([CTX, 'sync', '--no-views', '--background'], { timeoutMs: 5000 })
     } catch {}
   }
   let id = ''
@@ -186,6 +185,21 @@ async function refreshIndex($, root, remote) {
   return { from: before, to: id, was: oldHealth.active, now: newHealth.active }
 }
 
+function since(iso) {
+  const t = Date.parse(iso ?? '')
+  if (!t) return ''
+  const h = Math.round((Date.now() - t) / 3600000)
+  return h < 1 ? '' : ' ' + (h < 48 ? h + 'h' : Math.round(h / 24) + 'd')
+}
+
+// One strip element for every hub: its note count ('q' for a query hub), and its state when it is not ok.
+function hubsStrip(h) {
+  const list = Array.isArray(h.hubs) ? h.hubs.filter((x) => x && x.name) : []
+  if (list.length === 0) return 'hubs ?'
+  return 'hubs ' + list.map((x) => x.name + ' ' + (x.format === 'query' ? 'q' : (x.notes ?? 0)) +
+    (x.state && !['ok', 'query'].includes(x.state) ? ' (' + x.state + since(x.last_sync) + ')' : '')).join(' · ')
+}
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     const root = typeof e.cwd === 'string' ? e.cwd.replace(/\/+$/, '') : ''
@@ -212,14 +226,18 @@ export function register(on) {
     // takes for the model to know the hub exists and when to search it (no AGENTS.md line needed).
     if (!(await read($, primed))) {
       const h = parseJSON(await read($, health), {})
-      if (!h.error && h.active > 0) {
+      const others = Array.isArray(h.hubs) && h.hubs.some((x) => x && x.visibility !== 'team' && ((x.notes ?? 0) > 0 || x.format === 'query'))
+      if (!h.error && (h.active > 0 || others)) {
         const scopes = Object.entries(h.scopes ?? {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => k + ' ' + n).join(', ')
-        extra.push('Team knowledge hub (ctx): ' + h.active + ' active entries — ' + scopes + '. ' +
-          'Reviewed decisions, conventions, gotchas and runbooks live there, not in this repo. ' +
-          'Before answering about conventions, decisions, setup, project instructions, "our context", or a project, a tool, the user or earlier work, run `ctx search "<question>"` before reading files (or `ctx list` to see everything), then `ctx get <ID>`.' +
-          personalLine(h) + otherSourcesLine(h))
+        const team = h.active > 0
+          ? 'Team knowledge hub (ctx): ' + h.active + ' active entries — ' + scopes + '. ' +
+            'Reviewed decisions, conventions, gotchas and runbooks live there, not in this repo. '
+          : 'Context hubs (ctx): '
+        extra.push(team +
+          'Before answering about conventions, decisions, setup, project instructions, "our context", or a project, a tool, the user or earlier work, run `ctx search "<question>"` before reading files (or `ctx list` to see everything), then `ctx get <key>`.' +
+          hubsLine(h) + otherSourcesLine(h))
         await update($, primed, () => true)
-        await pushFeed($, 'pointer', 'hub pointer injected (' + h.active + ' entries)')
+        await pushFeed($, 'pointer', 'hub pointer injected (' + (h.active ?? 0) + ' entries)')
       }
     } else if (KNOWLEDGE_RE.test(String(e.text ?? ''))) {
       extra.push('This reads as a question the context layers may answer (team hub, project catalog, personal layer, Claude memory from other projects): run `ctx search "<question>"` before reading files.')
@@ -298,7 +316,7 @@ export function register(on) {
           const title = (/^title: '?([^'\n]+)'?$/m.exec(text) || /^name: (.+)$/m.exec(text) || [])[1] || c.rest.split(/\s+/)[0].split('/').pop()
           await pushFeed($, 'get', 'get personal ' + title)
         } else {
-          await pushFeed($, 'get', 'get ' + (firstULID(c.rest) ? short(firstULID(c.rest)) : '?') + ' → no entry')
+          await pushFeed($, 'get', 'get ' + (firstRef(c.rest) ? short(firstRef(c.rest)) : '?') + ' → no entry')
         }
       }
       await writeInplay($, inp)
@@ -460,7 +478,7 @@ export function register(on) {
       'L3 ' + used + ' used/' + found + ' found',
       'L5 ' + (srcs.length ? srcs.map((x) => x.name + ' ' + (su[x.name] ?? 0)).join(' ') : 'none'),
       'L6 MEMORY ' + (h.memory_lines ?? '?') + '/60',
-      'personal ' + (h.personal_projects ?? 0) + ' projects, ' + (h.personal_entries ?? 0) + ' notes',
+      hubsStrip(h),
       'L7 ' + fl.length + (fl.length === 1 ? ' file' : ' files'),
     ].join(' · ')
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ctx-promote: the only way the promote skill writes to the hub. Work happens in a private worktree under
-# ~/.config/ctx/promote (never in the shared hub checkout); every argument is validated here, so a
+# ~/.config/ctx/promote, created from the team hub's managed clone (`ctx hub path team`), never from a
+# checkout the user works in; every argument is validated here, so a
 # permission rule that allows this script cannot be widened by argument shape.
 #
 #   ctx-promote start                                   → prints a new worktree path (detached at origin/main)
@@ -13,8 +14,8 @@ die() { echo "ctx-promote: $*" >&2; exit 2; }
 PROMOTE="$HOME/.config/ctx/promote"
 hub() {
   local h="${CTX_HUB_DIR:-}"
-  [ -n "$h" ] || h="$(ctx config get hub-dir 2>/dev/null || true)"
-  [ -n "$h" ] && [ -d "$h/.git" ] || die "hub checkout not found (ctx config hub-dir PATH)"
+  [ -n "$h" ] || h="$(ctx hub path team 2>/dev/null || true)"
+  [ -n "$h" ] && [ -d "$h/.git" ] || die "team hub clone not found (run: ctx sync --hub team)"
   printf '%s' "$h"
 }
 real() { (cd "$1" 2>/dev/null && pwd -P) || return 1; }
@@ -52,8 +53,8 @@ case "$cmd" in
         git -C "$WT" pull -q --rebase origin main
         git -C "$WT" push -q origin HEAD:refs/heads/main
         SHA="$(git -C "$WT" rev-parse --short HEAD)"
-        if [ -z "${CTX_PROMOTE_NO_SYNC:-}" ] && make -C "$WT" index >/dev/null 2>&1; then
-          ctx sync --from "$WT/build" --no-views >/dev/null 2>&1 || true
+        if [ -z "${CTX_PROMOTE_NO_SYNC:-}" ]; then
+          ctx sync --hub team --no-views >/dev/null 2>&1 || true   # fetch the push into the managed clone and reindex now
         fi
         echo "pushed $SHA to main" ;;
       pr)

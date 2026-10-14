@@ -3,7 +3,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; SCRIPT="$HERE/../hooks/session-end.sh"
 T="$(mktemp -d)"; export CTX_CONFIG="$T/config.json" CTX_SESSIONS_DIR="$T/sessions" CTX_CLAUDE_BIN="$T/claude"
-printf '#!/usr/bin/env bash\necho "$@" > "%s/spawned"; echo "NOPERSONAL=$CTX_NO_PERSONAL" >> "%s/spawned"\n' "$T" "$T" > "$T/claude"; chmod +x "$T/claude"
+printf '#!/usr/bin/env bash\necho "$@" > "%s/spawned"; echo "NOPERSONAL=$CTX_NO_PERSONAL" >> "%s/spawned"; echo "VIS=$CTX_VISIBILITY" >> "%s/spawned"\n' "$T" "$T" "$T" > "$T/claude"; chmod +x "$T/claude"
 # Real transcripts carry tool results as "user" rows and the plugin's own pointer lines mention `ctx get`;
 # neither may count as a turn or a lookup.
 mk_transcript() { local turns=$1 lookups=$2; : > "$T/t.jsonl"
@@ -28,6 +28,8 @@ grep -q -- "--disallowedTools" "$T/spawned" || fail "dangerous tools not disallo
 grep -qF -- "Bash(ctx-promote publish * main*)" "$T/spawned" || fail "publish to main not denied"
 grep -q -- "--model haiku" "$T/spawned" || fail "review model from config not passed"
 grep -q "NOPERSONAL=1" "$T/spawned" || fail "the unattended run can see the personal layer"
+grep -q "VIS=team" "$T/spawned" || fail "review run not limited to team hubs"
+grep -q -- "Bash(ctx hub \*)" "$T/spawned" || fail "hub management not denied"
 grep -q -- "Bash(ctx-promote" "$T/spawned" || fail "hub writes not routed through ctx-promote"
 ALLOWED="$(sed -n 's/.*--allowedTools \(.*\) --disallowedTools.*/\1/p' "$T/spawned")"
 [[ "$ALLOWED" != *"Bash(git"* && "$ALLOWED" != *"Bash(gh"* ]] || fail "raw git or gh allowed: $ALLOWED"

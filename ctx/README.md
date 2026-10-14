@@ -4,7 +4,7 @@ A plugin (skills + a mod) over the `ctx` CLI and a team knowledge hub. It puts t
 
 ## How the model learns the hub exists
 
-Installing the plugin is enough; no AGENTS.md line is needed. On the first prompt of every session (and again after a compaction) the mod adds one line to the model's context: `Team knowledge hub (ctx): 15 active entries — rufalo 7, agents 2, … Before answering about conventions, decisions, setup, project instructions or "our context", run ctx search … (or ctx list)`. It is built from `ctx status`, so it stays current as the hub grows, and costs about 60 tokens per session. Later prompts that ask about the hub, conventions, decisions or "how do we …" get a one-line search hint.
+Installing the plugin is enough; no AGENTS.md line is needed. On the first prompt of every session (and again after a compaction) the mod adds one line to the model's context: `Team knowledge hub (ctx): 15 active entries — rufalo 7, … Other hubs on this machine: personal 4 · claude-memory 60 · repo-docs 24 · claude-docs (query) …`. It is built from `ctx status`, so it stays current as the hub grows, and costs about 60 tokens per session. Later prompts that ask about the hub, conventions, decisions or "how do we …" get a one-line search hint.
 
 ## Other sources (L5)
 
@@ -36,7 +36,7 @@ claude-docs:
 
 ```
 ctx · index 729b50c · 0d · 15 entries · review due 0
-L1 3.7k · L2 6 rules · L3 1 used/3 found · L5 claude-docs 1 · L6 MEMORY 4/60 · L7 4 files
+L1 3.7k · L2 6 rules · L3 1 used/3 found · L5 claude-docs 1 · L6 MEMORY 4/60 · hubs team 47 · personal 43 · claude-memory 60 · claude-docs q · L7 4 files
 ✓ reused  6N  Python is pinned to 3.12
 offered   6Q  Prompt cache: build_prefix assembles the stable prefix…
 04:37 search "python version" → 6N 6P ×2
@@ -44,7 +44,7 @@ offered   6Q  Prompt cache: build_prefix assembles the stable prefix…
 ```
 
 - Line 1: the installed index, its age, active entries, entries past their review date.
-- Line 2, one number per layer: L1 standing instructions (tokens of AGENTS.md/CLAUDE.md in this repo), L2 path rules, L3 hub entries used/found this session, L5 queries per other source, L6 MEMORY.md lines against the 60-line cap, L7 files read.
+- Line 2, one number per layer: L1 standing instructions (tokens of AGENTS.md/CLAUDE.md in this repo), L2 path rules, L3 hub entries used/found this session, L5 queries per other source, L6 MEMORY.md lines against the 60-line cap, `hubs` — each hub's note count, and its state when it is offline, failing auth, dirty, diverged or missing, L7 files read.
 - Entries in play (up to four): `✓ reused` (its terms appeared in a later edit or command), `✗ suspect` (a command using it failed), `used` (`ctx get`), `found` (search hit), `offered` (pointer).
 - The newest events; a repeat bumps `×n` instead of adding a line. Empty sections are not shown.
 
@@ -67,17 +67,16 @@ Nothing asks the model "was that useful"; self-reports skew positive. Every entr
 
 ## Staying current across sessions
 
-Every session on a machine reads the same local index (`~/.config/ctx/hub/index.db`), so one sync updates them all.
+Every session on a machine reads the same local index (`~/.config/ctx/index/`), built by `ctx sync` from every registered hub (`ctx hub list`). The mod runs `ctx sync --check` on every prompt (local only: picks up any hub that changed on disk, including Claude memory written this session) and a background `ctx sync` every 5 minutes (fetches git hubs). Right after a promote push, `ctx-promote` syncs the team hub at once.
 
-- **Session start, then every 5 minutes** (on your next prompt): `ctx sync --if-newer --no-views` asks GitHub for a newer release and installs it only if the corpus changed. It never writes into your repo.
 - **Every prompt:** a ~10 ms local check notices an index installed by any session; the feed shows `index b1 → b2 (+2 entries)` and the model is told once that the hub changed.
-- **Right after a promote push:** the skill rebuilds the index from your hub checkout and installs it immediately (`ctx sync --from`), so you don't wait for CI.
 - Syncs stage in private folders and swap the index in with one rename; a search that lands mid-swap retries.
 
 `ctx sync` with no flags still also rewrites the repo's `docs/ctx/INDEX.md` and `.claude/rules/ctx-*.md`; run it when you want those refreshed.
 
 ## Skills
 
+- `/ctx:hub` — add, list, change or remove hubs (repos, folders, local search tools)
 - `/ctx:search` — the search loop (`ctx search` → `ctx get` → section), with the rule to flag false entries with evidence.
 - `/ctx:promote <lesson>` — route one lesson; a hub entry is committed and pushed straight to main (undo with `git revert`).
 - `/ctx:promote` (no argument) — review this session: lists what was used, proposes every durable lesson (no count limit; duplicates become updates), grouped by destination for you to pick, turns suspect/wrong flags into `disputed` corrections; after you confirm, commits and pushes to main. Empty is a valid result.
