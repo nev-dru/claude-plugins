@@ -21,6 +21,8 @@ field() { ctx hub show "$1" --field "$2"; }
 hubname() {
   [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || die "bad hub name: ${1:-}"
   field "$1" name >/dev/null 2>&1 || die "no hub named $1 (ctx hub list)"
+  if [ -n "${CTX_REVIEW:-}" ] && [ "$(field "$1" main)" != true ]; then die "an unattended run writes only to the main team hub"; fi
+  [ "$(field "$1" mode)" = editable ] || die "hub $1 is read-only"
   printf '%s' "$1"
 }
 managed() { [ "$(field "$1" managed)" = true ]; }
@@ -40,12 +42,14 @@ lock() { # the lock ctx place apply takes too: a directory holding its owner's p
 }
 
 check_co() { # check_co <hub> <checkout>: prints the resolved checkout, or dies
-  local hub="$1" r p root br want
+  local hub="$1" r p root br want common
   r="$(real "$2")" || die "no such checkout: $2"
   if managed "$hub"; then
     mkdir -p "$PROMOTE"; p="$(real "$PROMOTE")"
     case "$r/" in "$p"/*/) ;; *) die "$2 is not a promote worktree under $PROMOTE";; esac
     [ "$r" != "$p" ] && [ -f "$r/.git" ] || die "$2 is not a promote worktree"
+    common="$(cd "$r" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+    [ "$common" = "$(real "$(field "$hub" root)/.git")" ] || die "$2 is a worktree of another hub, not $hub"
   else
     [ "$(field "$hub" mode)" = editable ] || die "hub $hub is read-only"
     root="$(real "$(field "$hub" root)")" || die "hub $hub has no folder"
@@ -71,7 +75,10 @@ scan() { # scan <hub> <checkout> <ctx scan args…>: refuse on any hit or error
 
 keep_pending() { # keep_pending <hub> <checkout>: save HEAD under refs/ctx/pending/<hub>/ when the remote lacks it
   local br; br="$(field "$1" branch)"
+  # An unattended run's output is its draft PR (the review); a pending ref would let a later push send it to main.
+  [ -z "${CTX_REVIEW:-}" ] || return 0
   if git -C "$2" merge-base --is-ancestor HEAD "origin/$br" 2>/dev/null; then return 0; fi
+  if [ -n "$(git -C "$2" branch -r --contains HEAD 2>/dev/null)" ]; then return 0; fi # pushed already (a promote/ branch)
   if [ -n "$(git -C "$2" for-each-ref --points-at HEAD "refs/ctx/pending/$1/")" ]; then return 0; fi # already kept
   git -C "$2" update-ref "refs/ctx/pending/$1/$(date +%Y%m%d-%H%M%S)-$$" HEAD
   echo "kept the unpushed commit as a pending ref; push it later with: ctx-promote push $1" >&2

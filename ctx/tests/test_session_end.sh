@@ -31,6 +31,7 @@ grep -q "NOPERSONAL=1" "$T/spawned" || fail "the unattended run can see the pers
 grep -q "VIS=team" "$T/spawned" || fail "review run not limited to team hubs"
 grep -q -- "Bash(ctx hub \*)" "$T/spawned" || fail "hub management not denied"
 grep -q -- "Bash(ctx-promote" "$T/spawned" || fail "hub writes not routed through ctx-promote"
+grep -q -- "--add-dir [^ ]*/.config/ctx/pending" "$T/spawned" && grep -q -- "Write(//[^ ]*/.config/ctx/pending/\*\*)" "$T/spawned" || fail "the review run cannot write its session folder (items.json, plan.json)"
 ALLOWED="$(sed -n 's/.*--allowedTools \(.*\) --disallowedTools.*/\1/p' "$T/spawned")"
 [[ "$ALLOWED" != *"Bash(git"* && "$ALLOWED" != *"Bash(gh"* ]] || fail "raw git or gh allowed: $ALLOWED"
 grep -q -- "--disallowedTools.*Bash(git \*).*Bash(gh \*)" "$T/spawned" || fail "raw git/gh not denied"

@@ -33,9 +33,10 @@ EOF
 chmod +x "$T/bin/ctx"
 printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/gh.log"; echo https://example/pr/1\n' "$T" > "$T/bin/gh"; chmod +x "$T/bin/gh"
 export PATH="$T/bin:$PATH" CTX_PROMOTE_NO_SYNC=1
-mkhub() { local d="$CTX_STUB/hubs/$1"; mkdir -p "$d"; echo "$1" > "$d/name"; echo "$2" > "$d/root"; echo "$3" > "$d/managed"; echo main > "$d/branch"; echo editable > "$d/mode"; }
-mkhub team "$T/team" true
+mkhub() { local d="$CTX_STUB/hubs/$1"; mkdir -p "$d"; echo "$1" > "$d/name"; echo "$2" > "$d/root"; echo "$3" > "$d/managed"; echo main > "$d/branch"; echo editable > "$d/mode"; echo "${4:-false}" > "$d/main"; }
+mkhub team "$T/team" true true
 mkhub vault "$T/vault" false
+origin kb; mkhub kb "$T/kb" true
 SESS="$CTX_STUB/sess"; mkdir -p "$SESS"
 
 # --- a managed clone: private worktree, manifest-only staging, trailers, scans
@@ -73,6 +74,16 @@ CTX_REVIEW=1 "$P" publish team "$WT" pr "add-entry" "promote: 1 entry" "$WT/.pro
 grep -q -- "--draft" "$T/gh.log" || fail "PR not a draft"
 grep -q "pr-title.txt" "$CTX_STUB/scan.log" && grep -q ".promote-body.md" "$CTX_STUB/scan.log" || fail "PR title and body not scanned"
 
+# unattended runs touch the main team hub only; a worktree belongs to its own hub; read-only managed hubs are refused
+if CTX_REVIEW=1 "$P" start vault >/dev/null 2>&1; then fail "an unattended run started a hub other than the main team hub"; fi
+if CTX_REVIEW=1 "$P" start kb >/dev/null 2>&1; then fail "an unattended run started a non-main managed hub"; fi
+KBWT="$("$P" start kb)"
+if "$P" commit team "$KBWT" "m" >/dev/null 2>&1; then fail "another hub's worktree accepted as team's checkout"; fi
+"$P" cleanup kb "$KBWT"; mkdir -p "$SESS"
+echo read-only > "$CTX_STUB/hubs/kb/mode"
+if "$P" start kb >/dev/null 2>&1; then fail "a read-only managed hub was started"; fi
+echo editable > "$CTX_STUB/hubs/kb/mode"
+
 # an interactive publish goes to main after a range scan
 "$P" publish team "$WT" main >"$T/pub.out" 2>&1 || { cat "$T/pub.out"; fail "publish main failed"; }
 [[ "$(git -C "$T/team.git" log --oneline main)" == *"promote: 1 entry"* ]] || fail "not pushed to main"
@@ -98,6 +109,16 @@ echo "four" > "$WT/entries/four.md"; printf 'entries/four.md\t4\t0\n' > "$SESS/t
 "$P" commit team "$WT" "promote: four" >/dev/null
 "$P" cleanup team "$WT" 2>/dev/null
 [ -n "$(git -C "$T/team" for-each-ref 'refs/ctx/pending/team/')" ] || fail "cleanup lost an unpushed commit"
+
+# a draft PR is the review: cleanup after it keeps no pending ref, so a later push never sends it to main
+git -C "$T/team" for-each-ref --format='%(refname)' 'refs/ctx/pending/team/' | while read -r r; do git -C "$T/team" update-ref -d "$r"; done
+WT="$(CTX_REVIEW=1 "$P" start team)"; mkdir -p "$SESS"
+echo "five" > "$WT/entries/five.md"; printf 'entries/five.md\t5\t0\n' > "$SESS/team.manifest"
+CTX_REVIEW=1 "$P" commit team "$WT" "promote: five" >/dev/null
+echo body > "$WT/.promote-body.md"
+CTX_REVIEW=1 "$P" publish team "$WT" pr "five" "promote: five" "$WT/.promote-body.md" >/dev/null
+CTX_REVIEW=1 "$P" cleanup team "$WT" 2>/dev/null
+[ -z "$(git -C "$T/team" for-each-ref 'refs/ctx/pending/team/')" ] || fail "a commit already in a draft PR was kept as pending"
 
 # --- the user's own checkout: written in place, never pulled or rebased, must be on the hub's branch
 VAULT="$(cd "$T/vault" && pwd -P)"

@@ -25,13 +25,15 @@ model_args=()
 [ -z "$MODEL" ] || model_args=(--model "$MODEL")
 PROMOTE="$HOME/.config/ctx/promote"; mkdir -p "$PROMOTE"
 promote_rel="${PROMOTE#/}"
+PENDING="$HOME/.config/ctx/pending"; mkdir -p "$PENDING"; chmod 700 "$PENDING"
+pending_rel="${PENDING#/}"   # the session folder: the skill writes items.json and plan.json there
 # All hub writes go through bin/ctx-promote, which validates its arguments and refuses to push to main
 # when CTX_REVIEW is set. Raw git and gh are denied outright. CTX_VISIBILITY=team keeps private hubs
 # (Claude memory, personal notes, the project map, private project hubs) out of this run, whose output
 # becomes a hub PR; CTX_NO_PERSONAL is its older name, kept for older ctx binaries.
 CTX_REVIEW=1 CTX_NO_PERSONAL=1 CTX_VISIBILITY=team nohup "$CLAUDE" -p --resume "$sid" "/ctx:promote --auto" ${model_args[@]+"${model_args[@]}"} \
-  --max-turns 25 --max-budget-usd 0.50 --add-dir "$PROMOTE" \
-  --allowedTools "Bash(ctx *)" "Bash(ctx-promote *)" "Bash(date *)" "Read" "Edit(//$promote_rel/**)" \
+  --max-turns 25 --max-budget-usd 0.50 --add-dir "$PROMOTE" --add-dir "$PENDING" \
+  --allowedTools "Bash(ctx *)" "Bash(ctx-promote *)" "Bash(date *)" "Read" "Edit(//$promote_rel/**)" "Edit(//$pending_rel/**)" "Write(//$pending_rel/**)" \
   --disallowedTools "Bash(git *)" "Bash(gh *)" "Bash(ctx sync *)" "Bash(ctx config *)" "Bash(ctx local *)" "Bash(ctx hub *)" "Bash(ctx-promote publish * main*)" \
   > "$SESSIONS/$sid.review.log" 2>&1 < /dev/null &
 exit 0
