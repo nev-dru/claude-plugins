@@ -40,14 +40,27 @@ function pathsIn(text, root) {
   return [...out].slice(0, 20)
 }
 
-// The hubs besides the team hub: personal notes, Claude memory, repo research, project hubs, query hubs.
+// The hubs besides the main team hub, with what each covers, so the model can add --hub <name>. Descriptions are
+// capped at 60 characters and the list at about 150 tokens; past that budget a hub keeps its name and count.
 function hubsLine(h) {
-  const list = Array.isArray(h.hubs) ? h.hubs.filter((x) => x && x.name && x.visibility !== 'team') : []
+  const main = h.main_hub || 'team'
+  const list = Array.isArray(h.hubs) ? h.hubs.filter((x) => x && x.name && x.name !== main) : []
   if (list.length === 0) return ''
-  const desc = list.map((x) => x.name + (x.format === 'query' ? ' (query)' : ' ' + (x.notes ?? 0))).join(' · ')
-  return ' Other hubs on this machine: ' + desc + ' — `ctx search` covers them too; cards show the hub in the key ' +
-    '(personal/01M…, claude-memory:<path>), `ctx get <key>` reads one, `--hub <name>` searches one hub. ' +
-    'To remember something about the user across all projects, run `ctx new --local <preference|fact|note> "<title>"` and fill in the file it prints.'
+  const cut = (s, n) => (s.length <= n ? s : s.slice(0, n - 1) + '…')
+  let budget = 600
+  const parts = list.map((x) => {
+    const count = x.format === 'query' ? '(query)' : String(x.notes ?? 0)
+    const short = x.name + ' ' + count
+    const desc = String(x.description ?? '').trim()
+    if (!desc) return short
+    const cov = Array.isArray(x.applies_to) && x.applies_to.length ? ' (' + x.applies_to.slice(0, 3).join(', ') + ')' : ''
+    const full = x.name + ' — ' + cut(desc, 60) + cov + ' ' + count
+    if (full.length <= budget) { budget -= full.length; return full }
+    return short
+  })
+  return ' Other hubs on this machine: ' + parts.join(' · ') + ' — `ctx search` covers them too; when a question is clearly ' +
+    "about one hub's scope, add `--hub <name>`. Cards show the hub in the key (personal/01M…, claude-memory:<path>); " +
+    '`ctx get <key>` reads one. To file anything — about the user, a project or the team — use /ctx:promote "<what>": it picks the hub with you.'
 }
 
 // One sentence per available source (team or personal), so the model knows what else it can query.

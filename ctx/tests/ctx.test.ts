@@ -470,7 +470,7 @@ test('the session pointer lists the other hubs and how to remember something', a
   await $.prompt.submit({ text: 'hi' })
   const ctx = (seen[0].context ?? []).join('\n')
   expect(ctx).toMatch(/Other hubs on this machine: personal 40 · claude-memory 60 · claude-docs \(query\)/)
-  expect(ctx).toMatch(/ctx new --local/)
+  expect(ctx).toMatch(/\/ctx:promote "<what>"/)
 })
 
 
@@ -559,4 +559,41 @@ test('a new index build with unchanged entries does not announce a hub update', 
   state.build = 'b2' // new code release, same entries
   await $.prompt.submit({ text: 'second' })
   expect((seen[1].context ?? []).join('\n')).not.toMatch(/Team hub updated/)
+})
+
+test('the pointer describes each hub so the model can narrow with --hub', async ($, on) => {
+  const seen = []
+  const long = 'A very long description of a hub that keeps going well past sixty characters of text'
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status'
+    ? JSON.stringify({ build_id: 'b1', active: 3, main_hub: 'kb', hubs: [
+        { name: 'kb', visibility: 'team', notes: 3 },
+        { name: 'orbit', visibility: 'team', notes: 4, description: 'Orbit sync epic', applies_to: ['repo:orbit-sync', 'jira:ORB-*'] },
+        { name: 'wiki', visibility: 'private', notes: 9, description: long },
+        { name: 'personal', visibility: 'private', notes: 40 }] }) + '\n'
+    : e.argv[1] === 'sync' && e.argv[2] === '--check' ? 'index: b1\n' : '', stderr: '' } }))
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hi' })
+  const ctx = (seen[0].context ?? []).join('\n')
+  expect(ctx).toMatch(/Other hubs on this machine: orbit — Orbit sync epic \(repo:orbit-sync, jira:ORB-\*\) 4 · wiki — A very long description of a hub that keeps going well past… 9 · personal 40/)
+  expect(ctx).not.toMatch(/kb 3/)
+  expect(ctx).toMatch(/--hub <name>/)
+})
+
+test('a long hub list keeps names and counts once the description budget is spent', async ($, on) => {
+  const seen = []
+  const hubs = Array.from({ length: 14 }, (_, i) => ({ name: 'hub' + i, visibility: 'private', notes: i, description: 'Description number ' + i + ' of a hub with a fairly long text' }))
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', ($, e) => ({ value: { exitCode: 0, stdout: e.argv[1] === 'status'
+    ? JSON.stringify({ build_id: 'b1', active: 0, hubs }) + '\n'
+    : e.argv[1] === 'sync' && e.argv[2] === '--check' ? 'index: b1\n' : '', stderr: '' } }))
+  on('prompt.submit', ($, e) => { seen.push(e); return { text: e.text } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'hi' })
+  const ctx = (seen[0].context ?? []).join('\n')
+  expect(ctx).toMatch(/hub0 — Description number 0/)
+  expect(ctx).toMatch(/ · hub13 13/)
 })
