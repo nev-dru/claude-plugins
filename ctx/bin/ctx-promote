@@ -1,78 +1,191 @@
 #!/usr/bin/env bash
-# ctx-promote: the only way the promote skill writes to the hub. Work happens in a private worktree under
-# ~/.config/ctx/promote, created from the team hub's managed clone (`ctx hub path team`), never from a
-# checkout the user works in; every argument is validated here, so a
-# permission rule that allows this script cannot be widened by argument shape.
+# ctx-promote: the only way skills commit and push hub changes (hub routing spec §5.4). Two kinds of checkout:
+# a private worktree under ~/.config/ctx/promote for hubs ctx clones itself (managed clones; rebased onto the
+# remote before a push), and the hub's own folder for hubs registered at a path the user works in (never pulled,
+# rebased, merged or stashed). Every argument is validated here, so a permission rule that allows this script
+# cannot be widened by argument shape. Only the files `ctx place apply` wrote (the session manifest) are staged,
+# and `ctx scan` runs before every commit and push.
 #
-#   ctx-promote start                                   → prints a new worktree path (detached at origin/main)
-#   ctx-promote commit  <wt> <message>                  → validate, then commit entries/ only
-#   ctx-promote publish <wt> main                       → push to main (refused inside an unattended run)
-#   ctx-promote publish <wt> pr <slug> <title> <body>   → push promote/<date>-<slug>, open a draft PR
-#   ctx-promote cleanup <wt>                            → remove the worktree
+#   ctx-promote start <hub>                                  → prints the checkout to write into
+#   ctx-promote commit <hub> <checkout> <message>            → scan, validate, stage the manifest's files, commit
+#   ctx-promote publish <hub> <checkout> main                → push to the hub's branch (refused in unattended runs)
+#   ctx-promote publish <hub> <checkout> pr <slug> <title> <body-file>   → push promote/<date>-<slug>, draft PR (GitHub)
+#   ctx-promote push <hub>                                   → retry pending (managed) or unpushed (own checkout) commits
+#   ctx-promote cleanup <hub> <checkout>                     → keep unpushed work as a pending ref, remove the worktree,
+#                                                              clear the session folder
 set -euo pipefail
 die() { echo "ctx-promote: $*" >&2; exit 2; }
 PROMOTE="$HOME/.config/ctx/promote"
-hub() {
-  local h="${CTX_HUB_DIR:-}"
-  [ -n "$h" ] || h="$(ctx hub path team 2>/dev/null || true)"
-  [ -n "$h" ] && [ -d "$h/.git" ] || die "team hub clone not found (run: ctx sync --hub team)"
-  printf '%s' "$h"
-}
 real() { (cd "$1" 2>/dev/null && pwd -P) || return 1; }
-check_wt() {
-  local wt="$1" r p
-  r="$(real "$wt")" || die "no such worktree: $wt"
-  mkdir -p "$PROMOTE"; p="$(real "$PROMOTE")"
-  case "$r/" in "$p"/*/) ;; *) die "$wt is not a promote worktree under $PROMOTE";; esac
-  [ "$r" != "$p" ] || die "$wt is the promote directory itself"
-  [ -f "$r/.git" ] || die "$wt is not a git worktree"
+field() { ctx hub show "$1" --field "$2"; }
+hubname() {
+  [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || die "bad hub name: ${1:-}"
+  field "$1" name >/dev/null 2>&1 || die "no hub named $1 (ctx hub list)"
+  printf '%s' "$1"
+}
+managed() { [ "$(field "$1" managed)" = true ]; }
+
+LOCK=""
+unlock() { if [ -n "$LOCK" ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || true; fi; }
+trap unlock EXIT
+lock() { # the lock ctx place apply takes too: a directory holding its owner's pid
+  local d="$HOME/.config/ctx/locks/$1" i=0 pid
+  mkdir -p "$(dirname "$d")"
+  until mkdir "$d" 2>/dev/null; do
+    pid="$(cat "$d/pid" 2>/dev/null || true)"
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -f "$d/pid"; rmdir "$d" 2>/dev/null || true; continue; fi
+    i=$((i + 1)); [ "$i" -lt 100 ] || die "$1 is busy (another session)"; sleep 0.1
+  done
+  echo $$ > "$d/pid"; LOCK="$d"
+}
+
+check_co() { # check_co <hub> <checkout>: prints the resolved checkout, or dies
+  local hub="$1" r p root br want
+  r="$(real "$2")" || die "no such checkout: $2"
+  if managed "$hub"; then
+    mkdir -p "$PROMOTE"; p="$(real "$PROMOTE")"
+    case "$r/" in "$p"/*/) ;; *) die "$2 is not a promote worktree under $PROMOTE";; esac
+    [ "$r" != "$p" ] && [ -f "$r/.git" ] || die "$2 is not a promote worktree"
+  else
+    [ "$(field "$hub" mode)" = editable ] || die "hub $hub is read-only"
+    root="$(real "$(field "$hub" root)")" || die "hub $hub has no folder"
+    [ "$r" = "$root" ] || die "$2 is not hub $hub's folder ($root)"
+    [ -e "$r/.git" ] || die "hub $hub's folder is not a git checkout"
+    br="$(git -C "$r" symbolic-ref --short -q HEAD || true)"; want="$(field "$hub" branch)"
+    [ "$br" = "$want" ] || die "hub $hub's checkout is on '${br:-a detached HEAD}', not $want; switch back first"
+  fi
   printf '%s' "$r"
+}
+
+scan() { # scan <hub> <checkout> <ctx scan args…>: refuse on any hit or error
+  local hub="$1" co="$2" s; shift 2
+  s="$(ctx place session)"
+  local extra=()
+  [ -f "$s/plan.json" ] && extra+=(--plan "$s/plan.json")
+  [ -f "$s/$hub.manifest" ] && extra+=(--manifest "$s/$hub.manifest")
+  if ! (cd "$co" && ctx scan --hub "$hub" ${extra[@]+"${extra[@]}"} "$@") > "$s/scan.json"; then
+    cat "$s/scan.json" >&2
+    die "the scan found problems (above); nothing was committed or pushed"
+  fi
+}
+
+keep_pending() { # keep_pending <hub> <checkout>: save HEAD under refs/ctx/pending/<hub>/ when the remote lacks it
+  local br; br="$(field "$1" branch)"
+  if git -C "$2" merge-base --is-ancestor HEAD "origin/$br" 2>/dev/null; then return 0; fi
+  if [ -n "$(git -C "$2" for-each-ref --points-at HEAD "refs/ctx/pending/$1/")" ]; then return 0; fi # already kept
+  git -C "$2" update-ref "refs/ctx/pending/$1/$(date +%Y%m%d-%H%M%S)-$$" HEAD
+  echo "kept the unpushed commit as a pending ref; push it later with: ctx-promote push $1" >&2
 }
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
   start)
-    H="$(hub)"; mkdir -p "$PROMOTE"
-    WT="$PROMOTE/$(date +%Y%m%d-%H%M%S)-$$"
-    git -C "$H" fetch -q origin
-    git -C "$H" worktree add -q --detach "$WT" origin/main
-    printf '%s\n' "$WT" ;;
+    [ $# -eq 1 ] || die "usage: ctx-promote start <hub>"
+    HUB="$(hubname "$1")"; BR="$(field "$HUB" branch)"
+    if managed "$HUB"; then
+      R="$(field "$HUB" root)"; [ -e "$R/.git" ] || die "hub $HUB is not cloned yet (run: ctx sync --hub $HUB)"
+      mkdir -p "$PROMOTE"; WT="$PROMOTE/$HUB-$(date +%Y%m%d-%H%M%S)-$$"
+      git -C "$R" fetch -q origin
+      git -C "$R" worktree add -q --detach "$WT" "origin/$BR"
+      printf '%s\n' "$WT"
+    else
+      check_co "$HUB" "$(field "$HUB" root)"; echo
+    fi ;;
   commit)
-    [ $# -eq 2 ] || die "usage: ctx-promote commit <wt> <message>"
-    WT="$(check_wt "$1")"; MSG="$2"
-    [ -x "$WT/scripts/validate.sh" ] && "$WT/scripts/validate.sh" >/dev/null
-    git -C "$WT" add -- entries/
-    git -C "$WT" commit -q -m "$MSG"
-    git -C "$WT" rev-parse --short HEAD ;;
+    [ $# -eq 3 ] || die "usage: ctx-promote commit <hub> <checkout> <message>"
+    HUB="$(hubname "$1")"; CO="$(check_co "$HUB" "$2")"; MSG="$3"; lock "$HUB"
+    S="$(ctx place session)"; MAN="$S/$HUB.manifest"
+    [ -s "$MAN" ] || die "nothing to commit for $HUB: ctx place apply wrote no files for it this session"
+    FILES=(); while IFS=$'\t' read -r rel _; do [ -n "$rel" ] && FILES+=("$rel"); done < "$MAN"
+    TEXT="$S/$HUB.message"
+    { printf '%s\n' "$MSG"; if [ -s "$S/$HUB.trailers" ]; then echo; cat "$S/$HUB.trailers"; fi; } > "$TEXT"
+    scan "$HUB" "$CO" --text "$TEXT" "${FILES[@]}"
+    if [ -x "$CO/scripts/validate.sh" ]; then "$CO/scripts/validate.sh" >/dev/null; fi
+    git -C "$CO" add -- "${FILES[@]}"
+    git -C "$CO" commit -q -F "$TEXT"
+    : > "$MAN"; : > "$S/$HUB.trailers"   # committed: the trailers live in the commit now
+    git -C "$CO" rev-parse --short HEAD ;;
   publish)
-    [ $# -ge 2 ] || die "usage: ctx-promote publish <wt> main | pr <slug> <title> <body-file>"
-    WT="$(check_wt "$1")"; MODE="$2"
+    [ $# -ge 3 ] || die "usage: ctx-promote publish <hub> <checkout> main | pr <slug> <title> <body-file>"
+    HUB="$(hubname "$1")"; CO="$(check_co "$HUB" "$2")"; MODE="$3"; BR="$(field "$HUB" branch)"; lock "$HUB"
     case "$MODE" in
       main)
-        [ -z "${CTX_REVIEW:-}" ] || die "an unattended run may not push to main; use: publish <wt> pr …"
-        git -C "$WT" pull -q --rebase origin main
-        git -C "$WT" push -q origin HEAD:refs/heads/main
-        SHA="$(git -C "$WT" rev-parse --short HEAD)"
-        if [ -z "${CTX_PROMOTE_NO_SYNC:-}" ]; then
-          ctx sync --hub team --no-views >/dev/null 2>&1 || true   # fetch the push into the managed clone and reindex now
+        [ $# -eq 3 ] || die "usage: ctx-promote publish <hub> <checkout> main"
+        [ -z "${CTX_REVIEW:-}" ] || die "an unattended run may not push to $BR; use: publish $HUB <checkout> pr …"
+        if managed "$HUB" && ! git -C "$CO" pull -q --rebase origin "$BR"; then
+          git -C "$CO" rebase --abort 2>/dev/null || true
+          keep_pending "$HUB" "$CO"; die "could not rebase onto origin/$BR; nothing pushed"
         fi
-        echo "pushed $SHA to main" ;;
+        scan "$HUB" "$CO" --range "$CO"
+        if ! git -C "$CO" push -q origin "HEAD:refs/heads/$BR"; then
+          if managed "$HUB"; then keep_pending "$HUB" "$CO"; die "push rejected; nothing pushed"; fi
+          die "push rejected; the commit stays in $CO — pull there yourself, then run: ctx-promote push $HUB"
+        fi
+        SHA="$(git -C "$CO" rev-parse --short HEAD)"
+        [ -n "${CTX_PROMOTE_NO_SYNC:-}" ] || ctx sync --hub "$HUB" --no-views >/dev/null 2>&1 || true
+        echo "pushed $SHA to $BR" ;;
       pr)
-        [ $# -eq 5 ] || die "usage: ctx-promote publish <wt> pr <slug> <title> <body-file>"
-        SLUG="$3"; TITLE="$4"; BODY="$5"
+        [ $# -eq 6 ] || die "usage: ctx-promote publish <hub> <checkout> pr <slug> <title> <body-file>"
+        SLUG="$4"; TITLE="$5"; BODY="$6"
         [[ "$SLUG" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || die "slug must be lowercase letters, digits and dashes"
-        BR="promote/$(date +%Y-%m-%d)-$SLUG"
         BODYR="$(cd "$(dirname "$BODY")" 2>/dev/null && pwd -P)/$(basename "$BODY")"
-        case "$BODYR" in "$WT"/*) ;; *) die "the PR body must be a file inside the worktree";; esac
-        git -C "$WT" push -q origin "HEAD:refs/heads/$BR"
-        REPO="$(git -C "$WT" remote get-url origin | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##')"
-        gh pr create --repo "$REPO" --head "$BR" --base main --draft --title "$TITLE" --body-file "$BODYR" ;;
+        S="$(real "$(ctx place session)")"
+        case "$BODYR" in "$CO"/*|"$S"/*) ;; *) die "the PR body must be a file inside the checkout or the session folder";; esac
+        printf '%s\n' "$TITLE" > "$S/pr-title.txt"
+        scan "$HUB" "$CO" --range "$CO" --text "$S/pr-title.txt" --text "$BODYR"
+        BRANCH="promote/$(date +%Y-%m-%d)-$SLUG"
+        git -C "$CO" push -q origin "HEAD:refs/heads/$BRANCH"
+        REPO="$(git -C "$CO" remote get-url origin | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##')"
+        gh pr create --repo "$REPO" --head "$BRANCH" --base "$BR" --draft --title "$TITLE" --body-file "$BODYR" ;;
       *) die "publish mode must be main or pr" ;;
     esac ;;
+  push)
+    [ $# -eq 1 ] || die "usage: ctx-promote push <hub>"
+    HUB="$(hubname "$1")"; BR="$(field "$HUB" branch)"; lock "$HUB"
+    [ -z "${CTX_REVIEW:-}" ] || die "an unattended run may not push to $BR"
+    if managed "$HUB"; then
+      R="$(field "$HUB" root)"; git -C "$R" fetch -q origin
+      REFS="$(git -C "$R" for-each-ref --sort=refname --format='%(refname)' "refs/ctx/pending/$HUB/")"
+      [ -n "$REFS" ] || { echo "nothing pending for $HUB"; exit 0; }
+      mkdir -p "$PROMOTE"; WT="$PROMOTE/$HUB-retry-$(date +%Y%m%d-%H%M%S)-$$"
+      git -C "$R" worktree add -q --detach "$WT" "origin/$BR"
+      SEEN=" "
+      for ref in $REFS; do
+        for c in $(git -C "$R" rev-list --reverse "origin/$BR..$ref"); do
+          case "$SEEN" in *" $c "*) continue;; esac   # two pending refs can share commits
+          SEEN="$SEEN$c "
+          if ! git -C "$WT" cherry-pick "$c" >/dev/null 2>&1; then
+            git -C "$WT" cherry-pick --abort 2>/dev/null || true
+            git -C "$R" worktree remove --force "$WT"
+            die "pending commit $c conflicts with origin/$BR; it stays pending under refs/ctx/pending/$HUB/"
+          fi
+        done
+      done
+      scan "$HUB" "$WT" --range "$WT"
+      if ! git -C "$WT" push -q origin "HEAD:refs/heads/$BR"; then
+        git -C "$R" worktree remove --force "$WT"; die "push rejected; the commits stay pending"
+      fi
+      SHA="$(git -C "$WT" rev-parse --short HEAD)"
+      for ref in $REFS; do git -C "$R" update-ref -d "$ref"; done
+      git -C "$R" worktree remove --force "$WT"; git -C "$R" worktree prune
+    else
+      CO="$(check_co "$HUB" "$(field "$HUB" root)")"
+      scan "$HUB" "$CO" --range "$CO"
+      git -C "$CO" push -q origin "HEAD:refs/heads/$BR" || die "push rejected; pull in $CO yourself, then run: ctx-promote push $HUB"
+      SHA="$(git -C "$CO" rev-parse --short HEAD)"
+    fi
+    [ -n "${CTX_PROMOTE_NO_SYNC:-}" ] || ctx sync --hub "$HUB" --no-views >/dev/null 2>&1 || true
+    echo "pushed $SHA to $BR" ;;
   cleanup)
-    [ $# -eq 1 ] || die "usage: ctx-promote cleanup <wt>"
-    WT="$(check_wt "$1")"; H="$(hub)"
-    git -C "$H" worktree remove --force "$WT"
-    git -C "$H" worktree prune ;;
-  *) die "usage: ctx-promote start | commit | publish | cleanup" ;;
+    [ $# -eq 2 ] || die "usage: ctx-promote cleanup <hub> <checkout>"
+    HUB="$(hubname "$1")"
+    if managed "$HUB"; then
+      CO="$(check_co "$HUB" "$2")"; R="$(field "$HUB" root)"
+      keep_pending "$HUB" "$CO"
+      git -C "$R" worktree remove --force "$CO"; git -C "$R" worktree prune
+    else
+      check_co "$HUB" "$2" >/dev/null
+    fi
+    ctx place cleanup ;;
+  *) die "usage: ctx-promote start | commit | publish | push | cleanup (see the header of this script)" ;;
 esac
