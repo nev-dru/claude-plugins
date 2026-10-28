@@ -1,0 +1,3 @@
+{"label": "R1 write 1h", "started": 1793200928, "took_s": 3, "read": 32107, "wrote": 12919, "wrote_5m": 0, "wrote_1h": 12919, "uncached": 2, "cost_usd": 0.0030324700000000002}
+{"label": "R2 hit with 5m request", "started": 1793204291, "took_s": 6, "read": 32232, "wrote": 12919, "wrote_5m": 12919, "wrote_1h": 0, "uncached": 2, "cost_usd": 0.001939395}
+{"label": "R3 at +63m (hit \u21d2 5m request kept the 1h entry)", "started": 1793204717, "took_s": 5, "read": 32107, "wrote": 12919, "wrote_5m": 0, "wrote_1h": 12919, "uncached": 2, "cost_usd": 0.0029070700000000003}

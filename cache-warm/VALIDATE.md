@@ -6,7 +6,7 @@ The cost model rests on a few assumptions that should be confirmed once per prov
 
 2. **A ping refreshes the TTL.** On a 5m cache: turn, wait 4 min, ping, wait 4 min, send a real turn. The real turn's `/usage` line (or a status line reading `current_usage`) should show cache reads, not a big write. Repeat on a 1h cache with 50-minute gaps if you run one.
 
-3. **A ping on a 1h-TTL session keeps the 1h TTL.** Forks fall in Claude Code's "everything else" TTL bucket (5m by default). Measured so far (`experiments/RESULTS.md`): a 5m request hits a 1h entry; whether that hit refreshes it for an hour or five minutes is the forward experiment (`experiments/ttl-refresh.sh forward`). Do **not** "fix" this with `subagentPromptCacheTtl: "1h"` on a 5m conversation: a fork with a longer TTL than the main rewrites the conversation every time. Set both TTLs to 1h or leave both alone.
+3. **A ping on a 1h-TTL session keeps the 1h TTL.** Measured (`experiments/RESULTS.md`): with the subagent bucket unset, a fork inherits the main conversation's TTL and reads its whole prefix; a fork in the other TTL mode never does. Do **not** set `subagentPromptCacheTtl` to a value different from `promptCacheTtl`. On API key or Bedrock with `promptCacheTtl: "1h"`, confirm with `/cachewarm ping` (verbose) that the fork reads ≈ the whole prefix; if it doesn't, set `subagentPromptCacheTtl: "1h"` as well.
 
 4. **What a ping really costs.** Read `out` on a few pings. With extended thinking the model may think before answering; output tokens bill at ~5× base input. The mod re-plans the break-even with the measured average, so this only matters for how close the estimate in `/cachewarm calc` is.
 

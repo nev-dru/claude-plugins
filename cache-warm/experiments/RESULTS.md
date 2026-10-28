@@ -6,10 +6,13 @@ All numbers are `usage` fields from `claude -p --output-format json` (`cache_rea
 
 1. **This auth writes the main conversation with the 1h TTL.** First probe: `ephemeral_1h_input_tokens: 15238, ephemeral_5m: 0`. Matches the documented subscription default.
 
-2. **Cache entries are TTL-classed.** A 1h entry serves 5m and 1h requests; a 5m entry serves only 5m requests.
-   - A 1h request over bytes written as 5m missed the conversation layer and rewrote it (upgrade R2: read 32,107 system layer, wrote 12,919 as 1h; two-step s2 fork: read 31,691, wrote 13,608).
-   - A 5m request over bytes written as 1h hit them (s2 M2: read 90,473, wrote 0, seven minutes after the 1h fork wrote them).
-   - Consequence: there is no cheap "upgrade" ping. A fork sent with a longer TTL than the main conversation rewrites the conversation at the 1h rate every time. `subagentPromptCacheTtl: "1h"` together with a 5m main conversation is the worst configuration for this mod, and the mod refuses to ping under it.
+2. **5m-TTL and 1h-TTL requests never share cache entries.** Every 5m request read a 32,232-token system layer and every 1h request a 32,107-token one: the two TTL modes send prefixes that differ by ~125 tokens (the 1h beta header changes the rendering), so a request in one mode cannot hit an entry written in the other, in either direction.
+   - 1h request over bytes written as 5m: missed the conversation layer and rewrote it (upgrade R2: wrote 12,919 as 1h; two-step s2 fork: read 31,691, wrote 13,608).
+   - 5m request over bytes written as 1h: missed too (forward R2 at +56 min: wrote 12,919 as 5m), and so the 1h entry was not kept alive (forward R3 at +63 min rewrote it).
+   - The one apparent counter-example (s2 M2 reading 90k seven minutes after a 5m refresh) is lazy eviction: c2 M2, the same setup two seconds apart, was evicted at 7m02s. Entries live *at least* their TTL, not exactly.
+   - Consequence: there is no cheap "upgrade" ping, and a fork in the other TTL mode from the main conversation rewrites the conversation every time.
+
+2b. **A fork inherits the main conversation's TTL unless the subagent bucket is set explicitly.** Two-step shape: main 1h + subagent unset → fork read 45,166 / wrote 4; main 1h + subagent 1h → the same; main 5m + subagent unset → read 45,291 / wrote 4; main 5m + subagent 1h → read 31,691 / wrote 13,608. So the default configurations are safe everywhere, and an explicit `subagentPromptCacheTtl` that differs from `promptCacheTtl` is the configuration the mod refuses.
 
 3. **A fork at the same TTL as the main conversation hits the whole prefix** when the main's last request ended in a tool result: two-step c2 fork read 45,291 / wrote 4. Its hit refreshed the 5m entries for five minutes (c2 M2 seven minutes later rewrote the conversation layer: 13,036 tokens).
 
@@ -19,11 +22,11 @@ All numbers are `usage` fields from `claude -p --output-format json` (`cache_rea
 
 6. **main → main hits in steady state.** Second run in a directory read 45,149 / wrote 0, so the probes' misses are not a first-run artifact.
 
-7. **Pending (forward experiment, R2 at +56 min, R3 at +63 min):** whether a 5m fork's hit on a 1h entry refreshes it for an hour or for five minutes. Until it reads 1h, the mod plans on five minutes after the first ping, which is the safe assumption.
+7. **Pending (long-lived session, fork at +56 min, second turn at +63 min):** direct confirmation that a default fork on a 1h conversation keeps the entry alive past the hour. Finding 2b already shows the fork is a 1h-mode request (it read the 1h entries), so a 1h refresh is expected.
 
 ## What this means for the mod
 
-- Pings are only safe when the fork's TTL ≤ the main conversation's TTL. Default configurations satisfy this everywhere (API key, Bedrock: 5m/5m; subscription: main 1h, fork 5m).
-- On a 5m main conversation (API key, Bedrock, gateway), each ping buys five minutes: break-even is under an hour on 0.1× models, 1.6 h on Opus/Sonnet 5.5, 3.3 h on Fable 5.1. To make pings cheap, set **both** `promptCacheTtl` and `subagentPromptCacheTtl` to `"1h"`: then a ping buys an hour.
-- On a subscription (main 1h, fork 5m), the first ping goes at 55 minutes. Whether the next one is due 4 or 55 minutes later depends on finding 7.
+- Pings are safe only when the fork is in the same TTL mode as the main conversation. With the subagent bucket unset the fork inherits it, so the defaults are safe everywhere: API key and Bedrock 5m/5m, subscription 1h/1h.
+- On a 5m main conversation (API key, Bedrock, gateway), each ping buys five minutes: break-even is under an hour on 0.1× models, 1.6 h on Opus/Sonnet 5.5, 3.3 h on Fable 5.1. Set `promptCacheTtl: "1h"` (and, to be explicit, `subagentPromptCacheTtl: "1h"` too — never only the subagent one) and a ping buys an hour.
+- On a subscription (main 1h, fork inherits 1h) pings go out every 55 minutes: break-even 17–72 hours depending on the model.
 - The outcome of every ping is judged by what was read, and the write is charged to the break-even, so finding 4's delta is accounted for rather than treated as a failure.

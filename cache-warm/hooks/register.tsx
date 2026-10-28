@@ -358,30 +358,25 @@ async function detect($: EngineInterface): Promise<void> {
   else if (S.provider === 'subscription') [S.ttl, S.ttlSource] = ['1h', 'subscription default']
   else [S.ttl, S.ttlSource] = ['5m', `${S.provider} default`]
 
-  // The TTL a ping (a fork) is sent with: Claude Code's "everything else"
-  // bucket, five minutes unless the subagent controls say otherwise.
-  let forkTtl: Ttl = '5m'
-  let forkSource = 'fork default'
+  // The TTL a ping (a fork) is sent with. Measured (experiments/RESULTS.md):
+  // with nothing set for the subagent bucket, a fork inherits the main
+  // conversation's TTL and reads its whole prefix (5m/5m and 1h/1h both hit).
+  // An explicit subagent TTL that differs from the main's puts the fork in
+  // the other TTL class, whose prefix bytes differ, so every ping rewrites
+  // the conversation. Refuse to ping in that case.
+  let forkTtl: Ttl = S.ttl
+  let forkSource = 'inherits the main conversation (measured)'
+  let explicit = false
   if (S.force5m) [forkTtl, forkSource] = ['5m', 'FORCE_PROMPT_CACHING_5M']
-  else if (subEnv === '5m' || subEnv === '1h') [forkTtl, forkSource] = [subEnv, 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL']
-  else if (subSetting === '5m' || subSetting === '1h') [forkTtl, forkSource] = [subSetting, 'subagentPromptCacheTtl setting']
+  else if (subEnv === '5m' || subEnv === '1h') [forkTtl, forkSource, explicit] = [subEnv, 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', true]
+  else if (subSetting === '5m' || subSetting === '1h') [forkTtl, forkSource, explicit] = [subSetting, 'subagentPromptCacheTtl setting', true]
   else if (enable1h === '1') [forkTtl, forkSource] = ['1h', 'ENABLE_PROMPT_CACHING_1H']
-
-  // Measured on the API (experiments/): cache entries are TTL-classed. A 1h
-  // entry serves 5m and 1h requests; a 5m entry serves only 5m requests. So a
-  // fork sent with a longer TTL than the main conversation's never reads the
-  // conversation, it rewrites it at the 1h rate every time: refuse to ping.
-  if (forkTtl === '1h' && S.ttl === '5m') {
+  if (explicit && forkTtl !== S.ttl) {
     S.paused =
-      `${forkSource} is 1h while the main conversation writes 5m entries; every ping would rewrite the conversation at 2x. ` +
-      'Set promptCacheTtl and subagentPromptCacheTtl to the same value.'
+      `${forkSource} is ${forkTtl} while the main conversation writes ${S.ttl} entries; every ping would rewrite the conversation. ` +
+      'Set promptCacheTtl and subagentPromptCacheTtl to the same value, or unset the subagent one.'
   }
-  // What a hit buys: a 5m fork refreshes a 5m entry for five minutes (measured).
-  // A 5m fork's hit on a 1h entry is measured by the forward experiment; until
-  // that reads 1h, plan on five minutes, which is the safe assumption.
-  if (forkTtl === '1h' && S.ttl === '1h') [S.refreshTtl, S.refreshTtlSource] = ['1h', `${forkSource}, same class as the entry`]
-  else [S.refreshTtl, S.refreshTtlSource] = ['5m', forkTtl === '5m' && S.ttl === '1h' ? `${forkSource}: a 5m request on a 1h entry` : forkSource]
-
+  ;[S.refreshTtl, S.refreshTtlSource] = [forkTtl, forkSource]
   // Provider limits on the TTL that was asked for.
   if (S.provider === 'bedrock' && BEDROCK_5M_ONLY.test(S.model)) {
     if (S.ttl === '1h') [S.ttl, S.ttlSource] = ['5m', 'bedrock: this model supports the 5-minute TTL only']
