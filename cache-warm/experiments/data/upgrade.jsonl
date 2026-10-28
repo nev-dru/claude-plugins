@@ -1,0 +1,3 @@
+{"label": "R1 write 5m", "started": 1793200915, "took_s": 4, "read": 0, "wrote": 45151, "wrote_5m": 45151, "wrote_1h": 0, "uncached": 2, "cost_usd": 0.005771475}
+{"label": "R2 hit with 1h request", "started": 1793200979, "took_s": 4, "read": 32107, "wrote": 12919, "wrote_5m": 0, "wrote_1h": 12919, "uncached": 2, "cost_usd": 0.0029070700000000003}
+{"label": "R3 after 7m (hit \u21d2 request TTL wins)", "started": 1793201403, "took_s": 4, "read": 45026, "wrote": 0, "wrote_5m": 0, "wrote_1h": 0, "uncached": 2, "cost_usd": 0.00045245999999999996}

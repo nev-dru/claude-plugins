@@ -26,7 +26,6 @@ type Options = {
   cacheReadMultiplier: number
   endAction: 'lapse' | 'compact'
   blockIdleCompaction: boolean
-  matchPingTtl: boolean
   showBand: boolean
   verbose: boolean
 }
@@ -148,14 +147,15 @@ const S = {
     cacheReadMultiplier: 0,
     endAction: 'lapse',
     blockIdleCompaction: true,
-    matchPingTtl: true,
     showBand: true,
     verbose: false,
   } as Options,
   // session facts
   provider: 'subscription' as Provider,
-  ttl: '5m' as Ttl,
+  ttl: '5m' as Ttl, // what the main conversation's requests write (the entry's lifetime)
   ttlSource: 'default',
+  refreshTtl: '5m' as Ttl, // what a ping buys: a hit refreshes an entry for the HITTING request's TTL (measured)
+  refreshTtlSource: 'fork default',
   model: '',
   prefixTokens: 0, // size of the cached prefix the next cold turn would rewrite
   lastRequestAt: 0, // start of the last main-thread request or ping (the TTL runs from there)
@@ -185,7 +185,6 @@ const S = {
   paused: '', // why automatic warming is off until /cachewarm on
   consecutiveLosses: 0, // idle periods that spent on pings and never came back warm
   firstPingWrites: 0, // idle periods whose first ping rewrote a live cache (Bedrock tolerates one)
-  subagentTtlEnv: undefined as string | undefined, // CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL as the user set it
   force5m: false,
   mainWrites: 0, // consecutive main-thread requests that rewrote a prefix that should have been warm
   gapPings: 0, // pings made since the last real request, judged by the next one
@@ -224,10 +223,13 @@ function tooSlowForTtl(): boolean {
   return marginMs() > TTL_MS[S.ttl] / 2
 }
 
-function intervalMs(): number {
+// The gap before the next ping. The first ping waits out the entry's own TTL;
+// every later one waits out what the previous ping bought (the refresh TTL).
+function intervalMs(afterPing = S.idlePings > 0): number {
+  const ttl = afterPing ? S.refreshTtl : S.ttl
   const want =
-    S.overrideInterval ?? (S.o.intervalMinutes > 0 ? S.o.intervalMinutes * 60_000 : defaultIntervalMs(S.ttl))
-  return Math.max(30_000, Math.min(want, TTL_MS[S.ttl] - marginMs()))
+    S.overrideInterval ?? (S.o.intervalMinutes > 0 ? S.o.intervalMinutes * 60_000 : defaultIntervalMs(ttl))
+  return Math.max(30_000, Math.min(want, TTL_MS[ttl] - marginMs()))
 }
 
 function priceNow(): Pricing {
@@ -240,9 +242,13 @@ function classify(u: ModelUsage, prefix: number): CacheOutcome {
   if (prefix <= 0) return 'none'
   const read = u.cache_read_input_tokens / prefix
   const wrote = u.cache_creation_input_tokens / prefix
-  if (read >= 0.8 && wrote < 0.05) return 'hit'
-  if (wrote >= 0.5 && read < 0.2) return 'write'
-  if (read > 0.05 || wrote > 0.05) return 'partial'
+  // A fork re-sends the history verbatim, but the last typed message can carry
+  // per-request attachments that differ, so a ping may rewrite that one turn's
+  // delta while reading everything before it. Judge by what was READ.
+  if (read >= 0.8) return 'hit'
+  if (read >= 0.3) return 'partial'
+  if (wrote >= 0.5) return 'write'
+  if (read > 0.02 || wrote > 0.02) return 'partial'
   return 'none'
 }
 
@@ -254,14 +260,21 @@ function noteRtt(ms: number): void {
 function planStopAt(from: number): number {
   if (mode() === 'manual') return from + (S.overrideDuration ?? S.o.durationMinutes) * 60_000
   const e = economics(S.prefixTokens, S.ttl, priceNow(), S.avgPingUsd)
-  return from + Math.max(0, S.o.stopFraction) * e.pings * intervalMs()
+  const pings = Math.max(0, S.o.stopFraction) * e.pings
+  if (pings < 1) return from + pings * intervalMs(false)
+  return from + intervalMs(false) + (pings - 1) * intervalMs(true)
+}
+
+// The TTL the live entry got: the main conversation's, or the refresh a ping bought.
+function liveTtl(): Ttl {
+  return S.idlePings > 0 ? S.refreshTtl : S.ttl
 }
 
 function phase(now: number): Phase {
   if (S.turnRunning) return 'turn'
   if (S.warming) return 'warming'
   if (!S.lastRequestAt) return 'none'
-  if (now - S.lastRequestAt < TTL_MS[S.ttl]) return 'warm'
+  if (now - S.lastRequestAt < TTL_MS[liveTtl()]) return 'warm'
   return S.paused ? 'paused' : 'cold'
 }
 
@@ -271,6 +284,8 @@ function snapshot(now: number): CacheView {
     phase: phase(now),
     ttl: S.ttl,
     ttlSource: S.ttlSource,
+    refreshTtl: S.refreshTtl,
+    liveTtl: liveTtl(),
     provider: S.provider,
     model: S.model,
     prefixTokens: S.prefixTokens,
@@ -323,11 +338,14 @@ async function detect($: EngineInterface): Promise<void> {
   else S.provider = 'subscription'
   if (bedrockUrl && S.provider === 'bedrock') S.provider = 'gateway'
   S.force5m = force5m === '1'
-  S.subagentTtlEnv = await $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL')
+  const subEnv = await $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL')
 
   let settingTtl: unknown
+  let subSetting: unknown
   try {
-    settingTtl = (await $.settings.read()).promptCacheTtl
+    const settings = await $.settings.read()
+    settingTtl = settings.promptCacheTtl
+    subSetting = settings.subagentPromptCacheTtl
   } catch {}
 
   // Mirrors Claude Code's own precedence for the main conversation's TTL.
@@ -340,9 +358,34 @@ async function detect($: EngineInterface): Promise<void> {
   else if (S.provider === 'subscription') [S.ttl, S.ttlSource] = ['1h', 'subscription default']
   else [S.ttl, S.ttlSource] = ['5m', `${S.provider} default`]
 
+  // The TTL a ping (a fork) is sent with: Claude Code's "everything else"
+  // bucket, five minutes unless the subagent controls say otherwise.
+  let forkTtl: Ttl = '5m'
+  let forkSource = 'fork default'
+  if (S.force5m) [forkTtl, forkSource] = ['5m', 'FORCE_PROMPT_CACHING_5M']
+  else if (subEnv === '5m' || subEnv === '1h') [forkTtl, forkSource] = [subEnv, 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL']
+  else if (subSetting === '5m' || subSetting === '1h') [forkTtl, forkSource] = [subSetting, 'subagentPromptCacheTtl setting']
+  else if (enable1h === '1') [forkTtl, forkSource] = ['1h', 'ENABLE_PROMPT_CACHING_1H']
+
+  // Measured on the API (experiments/): cache entries are TTL-classed. A 1h
+  // entry serves 5m and 1h requests; a 5m entry serves only 5m requests. So a
+  // fork sent with a longer TTL than the main conversation's never reads the
+  // conversation, it rewrites it at the 1h rate every time: refuse to ping.
+  if (forkTtl === '1h' && S.ttl === '5m') {
+    S.paused =
+      `${forkSource} is 1h while the main conversation writes 5m entries; every ping would rewrite the conversation at 2x. ` +
+      'Set promptCacheTtl and subagentPromptCacheTtl to the same value.'
+  }
+  // What a hit buys: a 5m fork refreshes a 5m entry for five minutes (measured).
+  // A 5m fork's hit on a 1h entry is measured by the forward experiment; until
+  // that reads 1h, plan on five minutes, which is the safe assumption.
+  if (forkTtl === '1h' && S.ttl === '1h') [S.refreshTtl, S.refreshTtlSource] = ['1h', `${forkSource}, same class as the entry`]
+  else [S.refreshTtl, S.refreshTtlSource] = ['5m', forkTtl === '5m' && S.ttl === '1h' ? `${forkSource}: a 5m request on a 1h entry` : forkSource]
+
   // Provider limits on the TTL that was asked for.
-  if (S.ttl === '1h' && S.provider === 'bedrock' && BEDROCK_5M_ONLY.test(S.model)) {
-    ;[S.ttl, S.ttlSource] = ['5m', 'bedrock: this model supports the 5-minute TTL only']
+  if (S.provider === 'bedrock' && BEDROCK_5M_ONLY.test(S.model)) {
+    if (S.ttl === '1h') [S.ttl, S.ttlSource] = ['5m', 'bedrock: this model supports the 5-minute TTL only']
+    if (S.refreshTtl === '1h') [S.refreshTtl, S.refreshTtlSource] = ['5m', 'bedrock: 5-minute TTL only']
   }
   if (S.ttl === '1h' && S.provider === 'gateway') {
     S.ttlSource += ' (needs the gateway to forward cache_control ttl and the anthropic-beta header)'
@@ -453,8 +496,8 @@ async function startWarming($: EngineInterface, now: number, force = false): Pro
   if (S.o.verbose) {
     const e = economics(S.prefixTokens, S.ttl, priceNow(), S.avgPingUsd)
     $.ui.log(
-      `warming on: ${S.ttl} cache via ${S.provider}, ${fmtK(S.prefixTokens)} tokens on ${S.model || 'unknown model'}; ` +
-        `ping ≈ ${fmtUsd(e.ping)} every ${fmtMin(intervalMs())}, warm return saves ${fmtUsd(e.saving)}, ` +
+      `warming on: ${S.ttl} entry, ${S.refreshTtl} refresh via ${S.provider}, ${fmtK(S.prefixTokens)} tokens on ${S.model || 'unknown model'}; ` +
+        `first ping in ${fmtMin(intervalMs(false))}, then every ${fmtMin(intervalMs(true))}; ping ≈ ${fmtUsd(e.ping)}, warm return saves ${fmtUsd(e.saving)}, ` +
         `break-even ${e.pings.toFixed(1)} pings; stops ${fmtClock(S.stopAt)}`,
     )
   }
@@ -471,7 +514,7 @@ async function ping($: EngineInterface): Promise<void> {
   // Guard 1: never ping a cache that may already be gone. The TTL runs from
   // the request's start at the API, and the body takes time to upload, so if
   // the expected arrival is past expiry the ping would be a full rewrite.
-  const expiresAt = S.lastRequestAt + TTL_MS[S.ttl]
+  const expiresAt = S.lastRequestAt + TTL_MS[liveTtl()]
   const arrival = now0 + Math.max(1000, S.rttEma / 2)
   if (arrival >= expiresAt) {
     await stopWarming(
@@ -486,19 +529,15 @@ async function ping($: EngineInterface): Promise<void> {
   try {
     before = await $.session.usage()
   } catch {}
-  // A fork falls in Claude Code's "everything else" TTL bucket, which defaults
-  // to five minutes even when the main conversation is on the hour. While the
-  // session is idle no subagent is running, so for the ping alone ask for the
-  // main conversation's TTL, then put the variable back the way it was.
-  const alignTtl = S.o.matchPingTtl && S.ttl === '1h' && !S.force5m && S.subagentTtlEnv !== '1h'
-  if (alignTtl) await $.env.set('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', '1h')
+  // Never change CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL from here: measured on
+  // the API, a fork sent after a mid-process change of that variable missed
+  // the entire prefix and rewrote it. The variable is only safe set at startup.
   const t0 = await $.clock.now()
   let r: Awaited<ReturnType<EngineInterface['model']['fork']>>
   try {
     r = await $.model.fork({ prompt: PING_PROMPT })
   } finally {
     S.pinging = false
-    if (alignTtl) await $.env.set('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', S.subagentTtlEnv)
   }
   const t1 = await $.clock.now()
   noteRtt(t1 - t0)
@@ -580,13 +619,14 @@ async function ping($: EngineInterface): Promise<void> {
     S.misses += 1
     if (outcome === 'write') S.writes += 1
     const sentWithin = t0 - (prevRequestAt || t0) // how long after the last refresh this ping went out
-    const fresh = sentWithin < TTL_MS[S.ttl] - marginMs()
+    const liveFor = S.idlePings === 1 ? TTL_MS[S.ttl] : TTL_MS[S.refreshTtl]
+    const fresh = sentWithin < liveFor - marginMs()
     if (outcome === 'none') {
       S.paused = 'pings are not cached at all on this provider or model (both counts zero)'
       await stopWarming($, S.paused)
       return
     }
-    if (S.idlePings === 1 && fresh) {
+    if (S.idlePings === 1 && fresh && outcome === 'write') {
       // The cache was certainly alive and the fork still didn't read it: the
       // fork's request differs from the main thread's (a gateway rewriting
       // cache_control, a provider quirk). Every ping would write, so pause.
@@ -606,23 +646,32 @@ async function ping($: EngineInterface): Promise<void> {
       noteRtt(Math.max(t1 - t0, marginMs()))
       $.ui.log(`the cache expired before this ping arrived; ping margin raised to ${fmtCountdown(marginMs())}`)
       if (tooSlowForTtl()) {
-        S.paused = `the connection is too slow for a ${S.ttl} cache (margin ${fmtCountdown(marginMs())}); use promptCacheTtl 1h`
+        S.paused = `the connection is too slow for a ${S.refreshTtl} refresh (margin ${fmtCountdown(marginMs())}); use promptCacheTtl 1h`
         await stopWarming($, S.paused)
         return
       }
     }
-    if (S.idleMisses >= 2) {
-      S.paused = 'two pings in one idle period rewrote or missed the cache'
+    if (outcome === 'write' && S.idleMisses >= 2) {
+      S.paused = 'two pings in one idle period rewrote the cache'
       await stopWarming($, S.paused)
       return
+    }
+    if (outcome === 'partial' && S.o.verbose) {
+      $.ui.log('partial read: the ping rewrote the last turn\'s delta; its cost is counted against the break-even')
     }
   }
 
   if (outcome === 'hit') S.firstPingWrites = 0
 
   // Guard 4: once this idle period has spent what a cold rewrite would cost,
-  // pinging can no longer come out ahead, whatever the plan said.
+  // pinging can no longer come out ahead, whatever the plan said. And a ping
+  // that costs more than half of a rewrite (a big last-turn delta rewritten
+  // each time) can never break even within the interval it buys.
   const e = economics(S.prefixTokens, S.ttl, priceNow(), S.avgPingUsd)
+  if (S.avgPingUsd !== undefined && S.avgPingUsd >= 0.5 * e.saving) {
+    await stopWarming($, `a ping costs ${fmtUsd(S.avgPingUsd)} against a ${fmtUsd(e.saving)} rewrite; not worth it here`)
+    return
+  }
   if (S.idleSpent >= e.saving * Math.max(0.05, S.o.stopFraction)) {
     await stopWarming($, `spent ${fmtUsd(S.idleSpent)} this idle period, the cost of a cold rewrite; letting it lapse`)
     return
@@ -636,16 +685,21 @@ async function ping($: EngineInterface): Promise<void> {
 function calcText(): string {
   const p = priceNow()
   const N = S.prefixTokens || 100_000
-  const rows = (['5m', '1h'] as Ttl[]).map((t) => {
-    const e = economics(N, t, p, t === S.ttl ? S.avgPingUsd : undefined)
-    const iv = defaultIntervalMs(t)
-    return (
-      `${t}: write ${WRITE_MULT[t]}x, read ${p.read}x → warm return saves ${fmtUsd(e.saving)}, ` +
-      `ping ≈ ${fmtUsd(e.ping)} every ${fmtMin(iv)}, break-even ${e.pings.toFixed(1)} pings = ${fmtMin(e.pings * iv)}`
-    )
-  })
+  const rows = (['5m', '1h'] as Ttl[]).flatMap((entry) =>
+    (['5m', '1h'] as Ttl[]).map((refresh) => {
+      const e = economics(N, entry, p, entry === S.ttl && refresh === S.refreshTtl ? S.avgPingUsd : undefined)
+      const first = defaultIntervalMs(entry)
+      const then = defaultIntervalMs(refresh)
+      const total = e.pings < 1 ? e.pings * first : first + (e.pings - 1) * then
+      const mark = entry === S.ttl && refresh === S.refreshTtl ? ' ◀ this session' : ''
+      return (
+        `entry ${entry} / ping refresh ${refresh}: write ${WRITE_MULT[entry]}x, read ${p.read}x → warm return saves ${fmtUsd(e.saving)}, ` +
+        `ping ≈ ${fmtUsd(e.ping)}; first ping at ${fmtMin(first)}, then every ${fmtMin(then)}; break-even ${e.pings.toFixed(1)} pings = ${fmtMin(total)}${mark}`
+      )
+    }),
+  )
   return (
-    `model ${S.model || '?'} · ${S.provider} · TTL ${S.ttl} (${S.ttlSource}) · prefix ${fmtK(N)} tokens` +
+    `model ${S.model || '?'} · ${S.provider} · entry TTL ${S.ttl} (${S.ttlSource}) · ping refresh ${S.refreshTtl} (${S.refreshTtlSource}) · prefix ${fmtK(N)} tokens` +
     (S.prefixTokens ? '' : ' (assumed; no turn yet)') +
     ` · $${p.input}/MTok base input${p.known ? '' : ' (model not in table, using $3)'}` +
     (S.provider === 'bedrock' && !S.o.inputPricePerMTok ? ' (Bedrock list ≈ Anthropic +10%; verify on the AWS pricing page)' : '') +
@@ -654,8 +708,11 @@ function calcText(): string {
     rows.join('\n') +
     `\nBreak-even time does not depend on prefix size: the saving and each ping both scale with it. ` +
     `Only the TTL, the model's read multiplier and the interval set it.` +
+    (S.refreshTtl === '5m'
+      ? `\nTip: subagentPromptCacheTtl: "1h" in settings makes each ping buy an hour instead of five minutes (set at startup; never mid-session).`
+      : '') +
     (S.ttl === '5m'
-      ? `\nTip: a 1h TTL (promptCacheTtl: "1h") costs 0.75x extra only on each turn's new tokens, and then one ping per 55 min keeps it warm instead of one per 4 min.`
+      ? `\nTip: promptCacheTtl: "1h" costs 0.75x extra only on each turn's new tokens and gives the first ping an hour of slack.`
       : '')
   )
 }
@@ -666,14 +723,14 @@ function statusText(now: number): string {
     `${fmtUsd(S.saved)} saved, net ${fmtUsd(S.saved - S.spent)}; ` +
     `${S.returnsWarm} warm return${S.returnsWarm === 1 ? '' : 's'}, ${S.returnsCold} cold, ${S.misses} misses`
   const head =
-    `${S.provider} · TTL ${S.ttl} (${S.ttlSource}) · model ${S.model || '?'} · prefix ${fmtK(S.prefixTokens)} tokens · ` +
+    `${S.provider} · entry TTL ${S.ttl} (${S.ttlSource}) · ping refresh ${S.refreshTtl} (${S.refreshTtlSource}) · model ${S.model || '?'} · prefix ${fmtK(S.prefixTokens)} tokens · ` +
     `ping margin ${fmtCountdown(marginMs())}${S.rttMax ? ` (slowest ping ${(S.rttMax / 1000).toFixed(1)}s)` : ''}` +
     (S.paused ? `\nPAUSED: ${S.paused} (/cachewarm on to resume)` : '') +
     (S.mainWrites >= 2 ? '\ncaching looks unhealthy: the last two requests rewrote the prefix' : '')
   const ph = phase(now)
   if (ph === 'none') return `cache-warm (mode ${mode()}) · ${head}\nno turn yet; warming starts when a turn completes.\n${totals}`
   if (!S.warming) {
-    const left = S.lastRequestAt + TTL_MS[S.ttl] - now
+    const left = S.lastRequestAt + TTL_MS[liveTtl()] - now
     const e = economics(S.prefixTokens, S.ttl, priceNow(), S.avgPingUsd)
     const state =
       ph === 'turn'
@@ -686,8 +743,8 @@ function statusText(now: number): string {
   const e = economics(S.prefixTokens, S.ttl, priceNow(), S.avgPingUsd)
   return (
     `warming · ${head}\n` +
-    `cache expires in ${fmtCountdown(S.lastRequestAt + TTL_MS[S.ttl] - now)}; next ping ${fmtClock(S.nextPingAt)} (${fmtCountdown(S.nextPingAt - now)}), ` +
-    `interval ${fmtMin(intervalMs())}; stops ${fmtClock(S.stopAt)} (${mode()})\n` +
+    `cache expires in ${fmtCountdown(S.lastRequestAt + TTL_MS[liveTtl()] - now)}; next ping ${fmtClock(S.nextPingAt)} (${fmtCountdown(S.nextPingAt - now)}), ` +
+    `then every ${fmtMin(intervalMs(true))}; stops ${fmtClock(S.stopAt)} (${mode()})\n` +
     `this idle period: ${S.idlePings} pings, ${fmtUsd(S.idleSpent)}${S.idleSpentPct ? ` / ${S.idleSpentPct.toFixed(1)}% of the 5h window` : ''}; ` +
     `last ping ${S.lastPingUsd === undefined ? '-' : fmtUsd(S.lastPingUsd)}; a warm return saves ${fmtUsd(e.saving)}; break-even ${e.pings.toFixed(1)} pings\n` +
     totals
@@ -863,8 +920,8 @@ export const register: Register = (on, options) => {
     if (!S.o.showBand || e.props.hasSurvey || v === null || (await read($, hidden))) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const narrow = e.props.bodyColumns < 100
-    const left = v.lastRequestAt + TTL_MS[v.ttl] - v.now
-    const ttlText = `TTL ${v.ttl}${narrow ? '' : ` (${v.ttlSource})`}`
+    const left = v.lastRequestAt + TTL_MS[v.liveTtl] - v.now
+    const ttlText = `TTL ${v.ttl}${v.refreshTtl !== v.ttl ? `→${v.refreshTtl}` : ''}${narrow ? '' : ` (${v.ttlSource})`}`
     const size = v.prefixTokens ? ` · ${fmtK(v.prefixTokens)} tok` : ''
 
     let stateColor: 'success' | 'warning' | 'subtle' | 'claude' = 'subtle'
@@ -947,7 +1004,7 @@ export const register: Register = (on, options) => {
         if (!S.warming && !S.turnRunning) void startWarming($, now, true)
         return {
           text:
-            `cache-warm auto: ping every ${fmtMin(intervalMs())} (margin ${fmtCountdown(marginMs())}) until break-even × ${S.o.stopFraction}.` +
+            `cache-warm auto: first ping after ${fmtMin(intervalMs(false))}, then every ${fmtMin(intervalMs(true))} (margin ${fmtCountdown(marginMs())}) until break-even × ${S.o.stopFraction}.` +
             (resumed ? ` Resumed after: ${resumed}.` : ''),
         }
       }
@@ -957,13 +1014,13 @@ export const register: Register = (on, options) => {
         clearWarming()
         void startWarming($, now)
         return {
-          text: `cache-warm manual: ping every ${fmtMin(intervalMs())} for ${S.overrideDuration ?? S.o.durationMinutes} min.`,
+          text: `cache-warm manual: first ping after ${fmtMin(intervalMs(false))}, then every ${fmtMin(intervalMs(true))}, for ${S.overrideDuration ?? S.o.durationMinutes} min.`,
         }
       case 'interval':
         if (!(n > 0)) return { text: 'usage: /cachewarm interval <minutes>' }
         S.overrideInterval = n * 60_000
         if (S.warming) schedulePing($, now)
-        return { text: `interval ${fmtMin(intervalMs())} (clamped to the ${S.ttl} TTL minus ${SAFETY_MS / 1000}s).` }
+        return { text: `interval ${fmtMin(intervalMs(true))} (clamped below the ${S.refreshTtl} refresh TTL minus the margin).` }
       case 'stop':
         await stopWarming($, 'stopped by /cachewarm stop')
         return { text: 'stopped; the cache will lapse after the TTL.' }
@@ -971,7 +1028,7 @@ export const register: Register = (on, options) => {
         const ph = phase(now)
         if ((ph === 'cold' || ph === 'paused') && arg !== 'force') {
           return {
-            text: `the cache expired ${fmtClock(S.lastRequestAt + TTL_MS[S.ttl])}; a ping now would rewrite ${fmtK(S.prefixTokens)} tokens, not read them. /cachewarm ping force to do it anyway.`,
+            text: `the cache expired ${fmtClock(S.lastRequestAt + TTL_MS[liveTtl()])}; a ping now would rewrite ${fmtK(S.prefixTokens)} tokens, not read them. /cachewarm ping force to do it anyway.`,
           }
         }
         if (ph === 'turn') return { text: 'a turn is running; it refreshes the cache itself.' }

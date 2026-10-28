@@ -1,0 +1,4 @@
+{"label": "W warm-up", "started": 1793201820, "took_s": 9, "read": 77433, "wrote": 13040, "wrote_5m": 13040, "wrote_1h": 0, "uncached": 4}
+{"t0":1793201842157,"ms":1551,"isAnswered":true,"input_tokens":18,"output_tokens":3,"cache_read_input_tokens":31691,"cache_creation_input_tokens":13608}
+{"label": "M1 main 5m + fork(SUBAGENT 1h static)", "started": 1793201834, "took_s": 9, "read": 90473, "wrote": 0, "wrote_5m": 0, "wrote_1h": 0, "uncached": 4}
+{"label": "M2 after 7m (read\u224890k \u21d2 fork refreshed for 1h)", "started": 1793202264, "took_s": 8, "read": 90473, "wrote": 0, "wrote_5m": 0, "wrote_1h": 0, "uncached": 4}

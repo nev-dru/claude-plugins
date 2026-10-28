@@ -1,6 +1,6 @@
 {
   "name": "cache-warm",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Keeps this session's prompt cache warm while you step away, and stops at the break-even point so it can only ever save tokens.",
   "author": {
     "name": "nev-dru"
@@ -86,12 +86,6 @@
       "title": "Show the band above the prompt",
       "type": "boolean",
       "description": "Draw the cache line above the prompt: state, countdown, TTL, pings and savings. /cachewarm band toggles it for a session.",
-      "default": true
-    },
-    "matchPingTtl": {
-      "title": "Match the ping TTL to the main conversation",
-      "type": "boolean",
-      "description": "Pings are forks, which Claude Code puts in the 5m TTL bucket. On a 1h conversation, ask for 1h on the ping alone (sets CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL around the fork) so the refresh lasts an hour.",
       "default": true
     }
   }

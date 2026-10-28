@@ -5,8 +5,10 @@ export type Phase = 'none' | 'turn' | 'warming' | 'warm' | 'cold' | 'paused'
 export type CacheView = {
   now: number
   phase: Phase
-  ttl: Ttl
+  ttl: Ttl // the main conversation's TTL: what a turn writes
   ttlSource: string
+  refreshTtl: Ttl // what a ping buys
+  liveTtl: Ttl // the TTL the current entry got
   provider: string
   model: string
   prefixTokens: number
