@@ -22,7 +22,7 @@ All numbers are `usage` fields from `claude -p --output-format json` (`cache_rea
 
 6. **main → main hits in steady state.** Second run in a directory read 45,149 / wrote 0, so the probes' misses are not a first-run artifact.
 
-7. **Pending (long-lived session, fork at +56 min, second turn at +63 min):** direct confirmation that a default fork on a 1h conversation keeps the entry alive past the hour. Finding 2b already shows the fork is a 1h-mode request (it read the 1h entries), so a 1h refresh is expected.
+7. **A default fork on a 1h conversation keeps it alive for a full hour.** Long-lived headless session (`longlive.sh`, stdin held open): turn 1 wrote 45,166 as 1h at T0; the probe mod forked at T0+56 min (read 45,166, wrote 4); turn 2 at T0+63 min read 90,401 and wrote 184 (its own new tokens). The entry's own lifetime ended at T0+60 min, so the fork's refresh carried it. One 55-minute ping per hour is enough on a subscription.
 
 8. **A mod can set the TTL itself.** `$.env.set('CLAUDE_CODE_PROMPT_CACHE_TTL', ...)` and the subagent variable, called in `session.start`, governed the very first request: on this 1h-default auth the probe asked for 5m and the main conversation wrote `ephemeral_5m: 13,596, 1h: 0`; the fork then hit the full prefix (45,287 read, 4 written). The shipped mod's `forceTtl` path was verified the same way (`wrote 5m 12,919, 1h 0`). Claude Code reads the variable per request, so a value set before the first request is consistent for the whole session; finding 5 is what happens when it changes after entries exist.
 
