@@ -26,28 +26,36 @@ type Options = {
   cacheReadMultiplier: number
   endAction: 'lapse' | 'compact'
   blockIdleCompaction: boolean
+  matchPingTtl: boolean
   showBand: boolean
   verbose: boolean
 }
 
-// Base input price in USD per MTok and the cache-read multiplier vs base, from
-// the Claude pricing table (platform.claude.com/docs/en/build-with-claude/prompt-caching).
+// Base input price in USD per MTok, the cache-read multiplier vs base, and the
+// minimum cacheable prefix in tokens, from the Claude pricing/caching docs.
 // Output is ~5x base input across the lineup. Order matters: first match wins.
-// Bedrock/Vertex rates may differ: override with inputPricePerMTok / cacheReadMultiplier.
-const PRICES: { re: RegExp; input: number; read: number; longInput?: number }[] = [
-  { re: /fable-5-1|mythos-5-1/, input: 10, read: 0.025 },
-  { re: /fable-5|mythos-5/, input: 10, read: 0.1 },
-  { re: /opus-5-5/, input: 4, read: 0.05 },
-  { re: /sonnet-5-5/, input: 2, read: 0.05 },
-  { re: /haiku-5-5/, input: 0.1, read: 0.1, longInput: 0.5 },
-  { re: /opus-5/, input: 5, read: 0.1 },
-  { re: /opus-4-[5-8]/, input: 5, read: 0.1 },
-  { re: /opus-4/, input: 15, read: 0.1 },
-  { re: /sonnet-5/, input: 2, read: 0.1 },
-  { re: /sonnet-4/, input: 3, read: 0.1 },
-  { re: /haiku-4-5/, input: 1, read: 0.1 },
-  { re: /haiku-3-5/, input: 0.8, read: 0.1 },
+// Bedrock keeps the same multipliers at a ~10% higher base (third-party price
+// trackers, Oct 2026; verify on the AWS pricing page): BEDROCK_MARKUP below.
+// A gateway's upstream rates are unknown here: set inputPricePerMTok.
+const PRICES: { re: RegExp; input: number; read: number; min: number; longInput?: number }[] = [
+  { re: /fable-5-1|mythos-5-1/, input: 10, read: 0.025, min: 512 },
+  { re: /fable-5|mythos-5/, input: 10, read: 0.1, min: 512 },
+  { re: /opus-5-5/, input: 4, read: 0.05, min: 512 },
+  { re: /sonnet-5-5/, input: 2, read: 0.05, min: 512 },
+  { re: /haiku-5-5/, input: 0.1, read: 0.1, min: 512, longInput: 0.5 },
+  { re: /opus-5/, input: 5, read: 0.1, min: 512 },
+  { re: /opus-4-8/, input: 5, read: 0.1, min: 1024 },
+  { re: /opus-4-[5-7]/, input: 5, read: 0.1, min: 4096 },
+  { re: /opus-4/, input: 15, read: 0.1, min: 1024 },
+  { re: /sonnet-5/, input: 2, read: 0.1, min: 1024 },
+  { re: /sonnet-4/, input: 3, read: 0.1, min: 1024 },
+  { re: /3-7-sonnet|3-5-sonnet/, input: 3, read: 0.1, min: 1024 },
+  { re: /haiku-4-5/, input: 1, read: 0.1, min: 4096 },
+  { re: /haiku-3-5/, input: 0.8, read: 0.1, min: 2048 },
 ]
+const BEDROCK_MARKUP = 1.1
+// Models whose Bedrock integration supports the 5-minute TTL only.
+const BEDROCK_5M_ONLY = /3-7-sonnet|3-5-sonnet/
 const OUTPUT_RATIO = 5
 const WRITE_MULT: Record<Ttl, number> = { '5m': 1.25, '1h': 2 }
 const TTL_MS: Record<Ttl, number> = { '5m': 5 * 60_000, '1h': 60 * 60_000 }
@@ -59,13 +67,18 @@ type Pricing = { input: number; read: number; output: number; known: boolean }
 
 // ---- pure math ---------------------------------------------------------------
 
-export function pricing(model: string, prefix: number, o: Options): Pricing {
+export function pricing(model: string, prefix: number, o: Options, provider = ''): Pricing {
   const row = PRICES.find((p) => p.re.test(model))
   let input = row ? (row.longInput && prefix > 100_000 ? row.longInput : row.input) : 3
+  if (provider === 'bedrock') input *= BEDROCK_MARKUP
   let read = row ? row.read : 0.1
   if (o.inputPricePerMTok > 0) input = o.inputPricePerMTok
   if (o.cacheReadMultiplier > 0) read = o.cacheReadMultiplier
   return { input, read, output: input * OUTPUT_RATIO, known: !!row }
+}
+
+export function minCacheable(model: string): number {
+  return PRICES.find((p) => p.re.test(model))?.min ?? 1024
 }
 
 export function usd(u: ModelUsage, p: Pricing, ttl: Ttl): number {
@@ -135,6 +148,7 @@ const S = {
     cacheReadMultiplier: 0,
     endAction: 'lapse',
     blockIdleCompaction: true,
+    matchPingTtl: true,
     showBand: true,
     verbose: false,
   } as Options,
@@ -170,6 +184,9 @@ const S = {
   retryBackoffMs: 0, // after a 429/overloaded answer
   paused: '', // why automatic warming is off until /cachewarm on
   consecutiveLosses: 0, // idle periods that spent on pings and never came back warm
+  firstPingWrites: 0, // idle periods whose first ping rewrote a live cache (Bedrock tolerates one)
+  subagentTtlEnv: undefined as string | undefined, // CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL as the user set it
+  force5m: false,
   mainWrites: 0, // consecutive main-thread requests that rewrote a prefix that should have been warm
   gapPings: 0, // pings made since the last real request, judged by the next one
   // session totals
@@ -214,7 +231,7 @@ function intervalMs(): number {
 }
 
 function priceNow(): Pricing {
-  return pricing(S.model, S.prefixTokens, S.o)
+  return pricing(S.model, S.prefixTokens, S.o, S.provider)
 }
 
 // What a response's usage says the API did with the prefix.
@@ -305,6 +322,8 @@ async function detect($: EngineInterface): Promise<void> {
   else if (apiKey || authToken) S.provider = 'api-key'
   else S.provider = 'subscription'
   if (bedrockUrl && S.provider === 'bedrock') S.provider = 'gateway'
+  S.force5m = force5m === '1'
+  S.subagentTtlEnv = await $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL')
 
   let settingTtl: unknown
   try {
@@ -320,6 +339,14 @@ async function detect($: EngineInterface): Promise<void> {
   else if (enable1h === '1') [S.ttl, S.ttlSource] = ['1h', 'ENABLE_PROMPT_CACHING_1H']
   else if (S.provider === 'subscription') [S.ttl, S.ttlSource] = ['1h', 'subscription default']
   else [S.ttl, S.ttlSource] = ['5m', `${S.provider} default`]
+
+  // Provider limits on the TTL that was asked for.
+  if (S.ttl === '1h' && S.provider === 'bedrock' && BEDROCK_5M_ONLY.test(S.model)) {
+    ;[S.ttl, S.ttlSource] = ['5m', 'bedrock: this model supports the 5-minute TTL only']
+  }
+  if (S.ttl === '1h' && S.provider === 'gateway') {
+    S.ttlSource += ' (needs the gateway to forward cache_control ttl and the anthropic-beta header)'
+  }
 }
 
 // A subscription gets the 1h TTL only within plan usage; past the limit Claude
@@ -402,12 +429,13 @@ async function startWarming($: EngineInterface, now: number, force = false): Pro
     await publish($)
     return
   }
-  if (S.prefixTokens < 1024) {
-    // Below every model's minimum cacheable prefix there is nothing to keep warm.
+  const minimum = minCacheable(S.model)
+  if (S.prefixTokens < minimum) {
+    // Below the model's minimum cacheable prefix there is nothing to keep warm.
     try {
       S.prefixTokens = (await $.session.usage()).context.tokens ?? 0
     } catch {}
-    if (S.prefixTokens < 1024) return
+    if (S.prefixTokens < minimum) return
   }
   S.warming = true
   S.idlePings = S.idleMisses = 0
@@ -458,12 +486,19 @@ async function ping($: EngineInterface): Promise<void> {
   try {
     before = await $.session.usage()
   } catch {}
+  // A fork falls in Claude Code's "everything else" TTL bucket, which defaults
+  // to five minutes even when the main conversation is on the hour. While the
+  // session is idle no subagent is running, so for the ping alone ask for the
+  // main conversation's TTL, then put the variable back the way it was.
+  const alignTtl = S.o.matchPingTtl && S.ttl === '1h' && !S.force5m && S.subagentTtlEnv !== '1h'
+  if (alignTtl) await $.env.set('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', '1h')
   const t0 = await $.clock.now()
   let r: Awaited<ReturnType<EngineInterface['model']['fork']>>
   try {
     r = await $.model.fork({ prompt: PING_PROMPT })
   } finally {
     S.pinging = false
+    if (alignTtl) await $.env.set('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', S.subagentTtlEnv)
   }
   const t1 = await $.clock.now()
   noteRtt(t1 - t0)
@@ -555,6 +590,13 @@ async function ping($: EngineInterface): Promise<void> {
       // The cache was certainly alive and the fork still didn't read it: the
       // fork's request differs from the main thread's (a gateway rewriting
       // cache_control, a provider quirk). Every ping would write, so pause.
+      // Bedrock's cross-region routing can write once under load, so there it
+      // takes two idle periods in a row before the session is paused.
+      S.firstPingWrites += 1
+      if (S.provider === 'bedrock' && S.firstPingWrites < 2) {
+        await stopWarming($, 'the first ping rewrote a live cache (Bedrock cross-region load?); not pinging again this idle period')
+        return
+      }
       S.paused = 'the first ping rewrote a live cache: the fork request differs from the main thread (gateway or provider)'
       await stopWarming($, S.paused)
       return
@@ -575,6 +617,8 @@ async function ping($: EngineInterface): Promise<void> {
       return
     }
   }
+
+  if (outcome === 'hit') S.firstPingWrites = 0
 
   // Guard 4: once this idle period has spent what a cold rewrite would cost,
   // pinging can no longer come out ahead, whatever the plan said.
@@ -603,7 +647,10 @@ function calcText(): string {
   return (
     `model ${S.model || '?'} · ${S.provider} · TTL ${S.ttl} (${S.ttlSource}) · prefix ${fmtK(N)} tokens` +
     (S.prefixTokens ? '' : ' (assumed; no turn yet)') +
-    ` · $${p.input}/MTok base input${p.known ? '' : ' (model not in table, using $3)'}\n` +
+    ` · $${p.input}/MTok base input${p.known ? '' : ' (model not in table, using $3)'}` +
+    (S.provider === 'bedrock' && !S.o.inputPricePerMTok ? ' (Bedrock list ≈ Anthropic +10%; verify on the AWS pricing page)' : '') +
+    (S.provider === 'gateway' && !S.o.inputPricePerMTok ? " (gateway: set inputPricePerMTok to your upstream's rate)" : '') +
+    '\n' +
     rows.join('\n') +
     `\nBreak-even time does not depend on prefix size: the saving and each ping both scale with it. ` +
     `Only the TTL, the model's read multiplier and the interval set it.` +
@@ -762,9 +809,16 @@ export const register: Register = (on, options) => {
       // Cache health of the main thread itself: a rewrite of a prefix that
       // should still have been warm, twice in a row, means caching isn't
       // working here, and pings would only add to the bill.
-      if (S.prefixTokens > 0 && gap > 0 && gap < TTL_MS[S.ttl] - marginMs()) {
-        if (outcome === 'write') S.mainWrites += 1
+      if (S.prefixTokens > minCacheable(S.model) && gap > 0 && gap < TTL_MS[S.ttl] - marginMs()) {
+        if (outcome === 'write' || outcome === 'none') S.mainWrites += 1
         else if (outcome === 'hit') S.mainWrites = 0
+        if (S.mainWrites === 2) {
+          $.ui.log(
+            outcome === 'none'
+              ? 'the last two requests were billed uncached: a gateway may be stripping cache_control; warming is off until a request reads the cache'
+              : 'the last two requests rewrote the prefix; warming is off until a request reads the cache',
+          )
+        }
       }
       S.gapPings = 0
 

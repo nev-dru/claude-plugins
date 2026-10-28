@@ -56,12 +56,27 @@ The TTL shown is what Claude Code will request, derived the way Claude Code deri
 
 Settings live in the plugin's config (`/plugin` → Installed → cache-warm, or `pluginConfigs` in settings.json): mode, interval, duration, `stopFraction`, TTL override, price overrides for Bedrock, `endAction` (`lapse` or `compact` while still warm), `blockIdleCompaction`, `verbose`.
 
-## Get the most out of it
+## Subscription, API key, Bedrock, LiteLLM: what differs
 
-- **API key, Bedrock, Vertex, Foundry, LiteLLM**: set `"promptCacheTtl": "1h"` in settings (v2.1.242+). The 1h write premium applies only to each turn's new tokens, and then one ping per 55 minutes keeps the whole conversation warm.
-- **Claude subscription**: the main conversation already gets the 1h TTL within plan usage, so pings are rare and cheap. Costs are tracked as the change in your five-hour usage window instead of dollars.
-- **Bedrock**: 1h TTL availability varies by model; check the model row in the Bedrock prompt-caching docs. Bedrock cache rates may differ from Anthropic's table: set `inputPricePerMTok` / `cacheReadMultiplier`.
-- **LiteLLM / gateways**: the gateway must forward `cache_control` markers and the `anthropic-beta` header unchanged. If the first ping reports a miss, the gateway is rewriting the request.
+Claude Code picks the TTL per request, in two buckets: the **main conversation** and **everything else** (subagents, forks, compaction). Pings are forks, so they live in the second bucket.
+
+| | Main conversation TTL | Forks (pings) TTL | Cache lives in | Cost unit |
+| --- | --- | --- | --- | --- |
+| Claude subscription, within plan usage | **1h** | 5m | Anthropic | five-hour / seven-day window % |
+| Subscription over plan usage (usage credits) | 5m | 5m | Anthropic | dollars |
+| API key | 5m | 5m | Anthropic (per workspace) | dollars |
+| Amazon Bedrock | 5m | 5m | your AWS account's region | dollars, ~10 % above Anthropic list |
+| Vertex / Foundry | 5m | 5m | the provider | dollars |
+| LLM gateway (`ANTHROPIC_BASE_URL`, e.g. LiteLLM → Bedrock) | 5m | 5m | wherever it forwards | your upstream's rate |
+
+How the mod handles each:
+
+- **TTL detection** mirrors Claude Code's precedence: `FORCE_PROMPT_CACHING_5M` → `CLAUDE_CODE_PROMPT_CACHE_TTL` → `promptCacheTtl` → `ENABLE_PROMPT_CACHING_1H` → the bucket default above. On a subscription it drops to 5m when a usage window reaches 100 %, as Claude Code does. Whatever it detects, it then **learns from the API**: a hit after a 5-minute-plus gap with no pings proves 1h; a rewrite inside the hour proves 5m.
+- **Ping TTL alignment** (`matchPingTtl`, default on): on a 1h conversation the ping is a 5m-bucket request by default, and it's unclear whether a 5m request refreshes a 1h entry for an hour or for five minutes. While idle no subagent runs, so the mod sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` around the fork only and restores it after. Whether Claude Code reads that variable per request is validation item 3; if not, set `subagentPromptCacheTtl: "1h"` in settings for the session.
+- **Set `promptCacheTtl: "1h"`** on API key, Bedrock, Vertex, Foundry and gateways (Claude Code v2.1.242+). The 1h premium applies only to each turn's new tokens; one ping per 55 minutes then holds the whole conversation, and break-even moves from under an hour to 17–72 hours depending on the model.
+- **Bedrock**: every current Claude model supports the 1h TTL on Bedrock (5.x family, Opus 4.5–4.8, Sonnet 4.5+, Haiku 4.5); Claude 3.7/3.5 are 5m-only and the mod refuses a 1h assumption for them. Minimum cacheable prefix varies by model (512 to 4,096 tokens) and the mod won't warm below it. Bedrock's cross-region routing can write instead of read under load, so on Bedrock a first-ping rewrite only ends that idle period; it takes two idle periods in a row to pause the session. Dollar figures use Anthropic's multipliers at a 10 % higher base (third-party trackers, October 2026; verify on the AWS pricing page or set `inputPricePerMTok`). Break-even times don't change: they depend only on the multipliers.
+- **LiteLLM / gateways**: the gateway must forward `cache_control` (with `ttl`) and the `anthropic-beta` header unchanged for the 1h TTL to reach Bedrock; LiteLLM can also set caching itself with `enable_anthropic_prompt_caching` / `anthropic_prompt_caching_ttl`. A gateway that strips the markers bills the whole conversation uncached on every turn: the mod sees two uncached requests in a row and stops warming until a request reads the cache. Set `inputPricePerMTok` to the upstream's rate so the dollar figures are right.
+- **Subscription**: pings spend plan usage, not dollars. The band shows five-hour-window points spent on pings next to an API-equivalent dollar figure. Since the main conversation already has the 1h TTL, pings are rare (about one per 55 minutes).
 
 ## Guardrails
 
