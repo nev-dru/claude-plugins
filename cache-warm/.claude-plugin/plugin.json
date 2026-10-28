@@ -1,6 +1,6 @@
 {
   "name": "cache-warm",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Keeps this session's prompt cache warm while you step away, and stops at the break-even point so it can only ever save tokens.",
   "author": {
     "name": "nev-dru"
@@ -46,6 +46,18 @@
         "detect",
         "5m",
         "1h"
+      ]
+    },
+    "forceTtl": {
+      "title": "Set the cache TTL for the session",
+      "type": "string",
+      "description": "auto: set a 1h TTL (main conversation and forks) at session start, except through a gateway. 1h / 5m: set that TTL regardless of provider. off: leave the environment alone. A 1h write costs 2x instead of 1.25x on each turn's new tokens; one absence of more than five minutes per session pays that back. Never applied to a conversation that already has requests.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "1h",
+        "5m",
+        "off"
       ]
     },
     "inputPricePerMTok": {

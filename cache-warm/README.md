@@ -56,6 +56,14 @@ The TTL shown is what Claude Code will request, derived the way Claude Code deri
 
 Settings live in the plugin's config (`/plugin` → Installed → cache-warm, or `pluginConfigs` in settings.json): mode, interval, duration, `stopFraction`, TTL override, price overrides for Bedrock, `endAction` (`lapse` or `compact` while still warm), `blockIdleCompaction`, `verbose`.
 
+## The mod sets the TTL for you
+
+By default (`forceTtl: auto`) the mod sets `CLAUDE_CODE_PROMPT_CACHE_TTL` and `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` to `1h` at session start, before the first request, on a subscription, API key, Bedrock, Vertex or Foundry. Claude Code reads those per request, so the whole session runs in one TTL mode and every ping buys an hour: break-even 17–72 hours instead of under two. Through a gateway (`ANTHROPIC_BASE_URL`) it leaves your configuration alone, because the `ttl` field and the `anthropic-beta` header may not be forwarded; set `forceTtl: 1h` explicitly once you have confirmed they are.
+
+What it costs: a 1h write is 2× base input instead of 1.25×, on each turn's *new* tokens only. One absence longer than five minutes per session pays that premium back (the avoided rewrite is 1.15–1.2× the whole prefix; the premium is 0.75× the tokens added). Set `forceTtl: off` to keep your own environment, or `5m` to pin the short cache.
+
+Safety rules, each from a measurement in `experiments/RESULTS.md`: both buckets are always set together; nothing is changed in a conversation that already holds an assistant reply (a resumed session, a hot reload mid-session) because switching TTL mode over live entries costs one full rewrite; `FORCE_PROMPT_CACHING_5M` is respected; Bedrock models that only support 5m are never given 1h.
+
 ## Subscription, API key, Bedrock, LiteLLM: what differs
 
 Claude Code picks the TTL per request, in two buckets: the **main conversation** and **everything else** (subagents, forks, compaction). Pings are forks, so they live in the second bucket.

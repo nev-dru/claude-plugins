@@ -24,8 +24,11 @@ All numbers are `usage` fields from `claude -p --output-format json` (`cache_rea
 
 7. **Pending (long-lived session, fork at +56 min, second turn at +63 min):** direct confirmation that a default fork on a 1h conversation keeps the entry alive past the hour. Finding 2b already shows the fork is a 1h-mode request (it read the 1h entries), so a 1h refresh is expected.
 
+8. **A mod can set the TTL itself.** `$.env.set('CLAUDE_CODE_PROMPT_CACHE_TTL', ...)` and the subagent variable, called in `session.start`, governed the very first request: on this 1h-default auth the probe asked for 5m and the main conversation wrote `ephemeral_5m: 13,596, 1h: 0`; the fork then hit the full prefix (45,287 read, 4 written). The shipped mod's `forceTtl` path was verified the same way (`wrote 5m 12,919, 1h 0`). Claude Code reads the variable per request, so a value set before the first request is consistent for the whole session; finding 5 is what happens when it changes after entries exist.
+
 ## What this means for the mod
 
+- The mod sets the TTL itself by default (`forceTtl: auto` → 1h on subscription, API key, Bedrock, Vertex and Foundry; untouched through a gateway) so warming does not depend on the user's environment. It never does this to a conversation that already has an assistant reply.
 - Pings are safe only when the fork is in the same TTL mode as the main conversation. With the subagent bucket unset the fork inherits it, so the defaults are safe everywhere: API key and Bedrock 5m/5m, subscription 1h/1h.
 - On a 5m main conversation (API key, Bedrock, gateway), each ping buys five minutes: break-even is under an hour on 0.1× models, 1.6 h on Opus/Sonnet 5.5, 3.3 h on Fable 5.1. Set `promptCacheTtl: "1h"` (and, to be explicit, `subagentPromptCacheTtl: "1h"` too — never only the subagent one) and a ping buys an hour.
 - On a subscription (main 1h, fork inherits 1h) pings go out every 55 minutes: break-even 17–72 hours depending on the model.

@@ -26,6 +26,7 @@ type Options = {
   cacheReadMultiplier: number
   endAction: 'lapse' | 'compact'
   blockIdleCompaction: boolean
+  forceTtl: 'auto' | '1h' | '5m' | 'off'
   showBand: boolean
   verbose: boolean
 }
@@ -147,6 +148,7 @@ const S = {
     cacheReadMultiplier: 0,
     endAction: 'lapse',
     blockIdleCompaction: true,
+    forceTtl: 'auto',
     showBand: true,
     verbose: false,
   } as Options,
@@ -186,6 +188,7 @@ const S = {
   consecutiveLosses: 0, // idle periods that spent on pings and never came back warm
   firstPingWrites: 0, // idle periods whose first ping rewrote a live cache (Bedrock tolerates one)
   force5m: false,
+  forcedTtl: '' as '' | Ttl, // the TTL this mod set for the session, if any
   mainWrites: 0, // consecutive main-thread requests that rewrote a prefix that should have been warm
   gapPings: 0, // pings made since the last real request, judged by the next one
   // session totals
@@ -316,6 +319,73 @@ async function publish($: EngineInterface): Promise<void> {
   await update($, view, () => snapshot(now))
 }
 
+// Set the session's TTL ourselves, so warming doesn't depend on the user's
+// environment. Measured: Claude Code reads CLAUDE_CODE_PROMPT_CACHE_TTL per
+// request, and a value set in session.start governs the first request on.
+// Both buckets are set together (a fork in the other TTL mode rewrites the
+// conversation), and only before any request exists in this conversation: a
+// mode change over live entries costs one full rewrite, so a resumed
+// conversation or a hot reload mid-session is left alone.
+async function applyForcedTtl($: EngineInterface): Promise<void> {
+  const choice = S.o.forceTtl
+  if (choice === 'off') return
+  const [force5m, mainEnv, subEnv, bedrock, baseUrl, vertex, foundry] = await Promise.all([
+    $.env.get('FORCE_PROMPT_CACHING_5M'),
+    $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL'),
+    $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'),
+    $.env.get('CLAUDE_CODE_USE_BEDROCK'),
+    $.env.get('ANTHROPIC_BASE_URL'),
+    $.env.get('CLAUDE_CODE_USE_VERTEX'),
+    $.env.get('CLAUDE_CODE_USE_FOUNDRY'),
+  ])
+  if (force5m === '1') {
+    if (S.o.verbose) $.ui.log('not setting the cache TTL: FORCE_PROMPT_CACHING_5M is set')
+    return
+  }
+  let want: Ttl
+  if (choice === 'auto') {
+    // 1h everywhere the provider is known to honor it. Through a gateway the
+    // ttl field and the anthropic-beta header may not be forwarded, so leave
+    // the user's configuration alone there unless they choose 1h explicitly.
+    const isGateway = !!baseUrl && !(bedrock === '1' || bedrock === 'true') && !(vertex === '1' || vertex === 'true') && !(foundry === '1' || foundry === 'true')
+    if (isGateway) return
+    want = '1h'
+  } else {
+    want = choice
+  }
+  let model = ''
+  try {
+    model = await $.session.model()
+  } catch {}
+  if (want === '1h' && (bedrock === '1' || bedrock === 'true') && BEDROCK_5M_ONLY.test(model)) {
+    $.ui.log('not setting a 1h cache TTL: this model supports the 5-minute TTL only on Bedrock')
+    return
+  }
+  if (mainEnv === want && subEnv === want) {
+    S.forcedTtl = want
+    return
+  }
+  // A conversation that already holds an assistant reply was built with the
+  // current TTL (a resumed session, a hot reload mid-session); switching it
+  // would miss any entry still warm. A pending first prompt is fine.
+  let answered = false
+  try {
+    answered = (await $.session.messages()).some((m) => m.role === 'assistant')
+  } catch {}
+  if (answered) {
+    $.ui.log(`cache TTL left at ${mainEnv ?? 'the default'}: this conversation already has requests; the ${want} TTL applies to the next new session`)
+    return
+  }
+  const a = await $.env.set('CLAUDE_CODE_PROMPT_CACHE_TTL', want)
+  const b = await $.env.set('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', want)
+  if (a.deny || b.deny) {
+    $.ui.log(`could not set the cache TTL: ${a.deny ?? b.deny}`)
+    return
+  }
+  S.forcedTtl = want
+  if (S.o.verbose) $.ui.log(`cache TTL set to ${want} for this session (main conversation and forks)`)
+}
+
 async function detect($: EngineInterface): Promise<void> {
   const [apiKey, authToken, bedrock, vertex, foundry, baseUrl, bedrockUrl, ttlEnv, enable1h, force5m] =
     await Promise.all([
@@ -352,7 +422,7 @@ async function detect($: EngineInterface): Promise<void> {
   const o = S.o
   if (o.ttl === '5m' || o.ttl === '1h') [S.ttl, S.ttlSource] = [o.ttl, 'plugin config']
   else if (force5m === '1') [S.ttl, S.ttlSource] = ['5m', 'FORCE_PROMPT_CACHING_5M']
-  else if (ttlEnv === '5m' || ttlEnv === '1h') [S.ttl, S.ttlSource] = [ttlEnv, 'CLAUDE_CODE_PROMPT_CACHE_TTL']
+  else if (ttlEnv === '5m' || ttlEnv === '1h') [S.ttl, S.ttlSource] = [ttlEnv, S.forcedTtl === ttlEnv ? 'set by cache-warm' : 'CLAUDE_CODE_PROMPT_CACHE_TTL']
   else if (settingTtl === '5m' || settingTtl === '1h') [S.ttl, S.ttlSource] = [settingTtl, 'promptCacheTtl setting']
   else if (enable1h === '1') [S.ttl, S.ttlSource] = ['1h', 'ENABLE_PROMPT_CACHING_1H']
   else if (S.provider === 'subscription') [S.ttl, S.ttlSource] = ['1h', 'subscription default']
@@ -368,7 +438,7 @@ async function detect($: EngineInterface): Promise<void> {
   let forkSource = 'inherits the main conversation (measured)'
   let explicit = false
   if (S.force5m) [forkTtl, forkSource] = ['5m', 'FORCE_PROMPT_CACHING_5M']
-  else if (subEnv === '5m' || subEnv === '1h') [forkTtl, forkSource, explicit] = [subEnv, 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', true]
+  else if (subEnv === '5m' || subEnv === '1h') [forkTtl, forkSource, explicit] = [subEnv, S.forcedTtl === subEnv ? 'set by cache-warm' : 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', true]
   else if (subSetting === '5m' || subSetting === '1h') [forkTtl, forkSource, explicit] = [subSetting, 'subagentPromptCacheTtl setting', true]
   else if (enable1h === '1') [forkTtl, forkSource] = ['1h', 'ENABLE_PROMPT_CACHING_1H']
   if (explicit && forkTtl !== S.ttl) {
@@ -752,6 +822,7 @@ export const register: Register = (on, options) => {
   S.o = { ...S.o, ...(options as unknown as Partial<Options>) }
 
   on('session.start', async ($, e, next) => {
+    await applyForcedTtl($)
     await detect($)
     try {
       S.model = await $.session.model()
