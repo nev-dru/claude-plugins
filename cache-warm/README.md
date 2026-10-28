@@ -32,7 +32,16 @@ From the shell: `claude plugin install cache-warm --marketplace nev-dru/claude-p
 
 ## Use
 
-Nothing to do: warming starts when a turn completes and stops when the next one starts. A status line under the prompt shows the TTL, next ping, pings so far and their cost, and when it will stop.
+Nothing to do: warming starts when a turn completes and stops when the next one starts. A two-line band above the prompt shows, live:
+
+```
+cache  warm · expires 52:10 · ping in 51:25 · stops 15:20 (break-even) · TTL 1h (subscription default) · 142k tok
+       3 pings · spent $0.09 (0.4% of 5h) · saved $2.25 · net +$2.16  hide
+```
+
+The first line is the cache state (warm / cold / turn in progress) with a countdown to expiry and to the next ping, the TTL in effect and where it came from, and the prefix size. The second line is the session total: pings made, what they cost (dollars, plus five-hour-window points on a subscription), what warm returns saved, and the net. A saving is booked only when you come back after an idle period longer than the TTL **and** the first request is actually served from cache, so the number is realized, not projected. Hide the band with its button or `/cachewarm band`; turn it off for good with the `showBand` setting.
+
+The TTL shown is what Claude Code will request, derived the way Claude Code derives it (`FORCE_PROMPT_CACHING_5M`, `CLAUDE_CODE_PROMPT_CACHE_TTL`, `promptCacheTtl`, `ENABLE_PROMPT_CACHING_1H`, then the auth-mode default: 1h on a subscription within plan usage, 5m everywhere else). The API's response doesn't tell a mod which TTL was written, so if you set the TTL somewhere unusual, set the `ttl` option to match.
 
 `/cachewarm` subcommands:
 
@@ -43,6 +52,7 @@ Nothing to do: warming starts when a turn completes and stops when the next one 
 - `interval <minutes>`: ping interval (clamped below the TTL)
 - `ping`: ping right now and report the usage (for validation)
 - `stop`: stop warming this idle period
+- `band`: hide or show the band above the prompt
 
 Settings live in the plugin's config (`/plugin` → Installed → cache-warm, or `pluginConfigs` in settings.json): mode, interval, duration, `stopFraction`, TTL override, price overrides for Bedrock, `endAction` (`lapse` or `compact` while still warm), `blockIdleCompaction`, `verbose`.
 

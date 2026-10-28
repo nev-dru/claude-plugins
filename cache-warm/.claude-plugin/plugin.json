@@ -1,11 +1,12 @@
 {
   "name": "cache-warm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Keeps this session's prompt cache warm while you step away, and stops at the break-even point so it can only ever save tokens.",
   "author": {
     "name": "nev-dru"
   },
   "license": "MIT",
+  "types": "./types/index.d.ts",
   "userConfig": {
     "mode": {
       "title": "Mode",
@@ -80,6 +81,12 @@
       "type": "boolean",
       "description": "Log every ping's token usage to the transcript.",
       "default": false
+    },
+    "showBand": {
+      "title": "Show the band above the prompt",
+      "type": "boolean",
+      "description": "Draw the cache line above the prompt: state, countdown, TTL, pings and savings. /cachewarm band toggles it for a session.",
+      "default": true
     }
   }
 }
