@@ -14,6 +14,7 @@ Personal plugin marketplace for [Claude Code](https://claude.com/claude-code).
 |---|---|---|
 | `agents-md` | [nev-dru/agents-md-plugin](https://github.com/nev-dru/agents-md-plugin) | Generate, audit, and maintain evidence-based AGENTS.md context files. |
 | `pseudoplan` | [`pseudoplan/`](./pseudoplan) (in this repo) | Plan code changes as reviewable pseudocode, approved in the browser before any code is written; also reviews existing diffs. |
+| `cache-warm` | [`cache-warm/`](./cache-warm) (in this repo) | Mod that keeps a session's prompt cache warm while you're away and stops at the break-even point, so it only ever saves tokens. |
 
 Install a plugin with:
 

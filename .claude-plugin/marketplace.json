@@ -21,6 +21,11 @@
       "name": "ctx",
       "source": "./ctx",
       "description": "Team context: search reviewed knowledge and promote lessons."
+    },
+    {
+      "name": "cache-warm",
+      "source": "./cache-warm",
+      "description": "Mod that keeps a session's prompt cache warm while you're away and stops at the break-even point, so it only ever saves tokens."
     }
   ]
 }

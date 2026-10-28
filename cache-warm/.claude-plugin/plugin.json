@@ -1,0 +1,85 @@
+{
+  "name": "cache-warm",
+  "version": "0.1.0",
+  "description": "Keeps this session's prompt cache warm while you step away, and stops at the break-even point so it can only ever save tokens.",
+  "author": {
+    "name": "nev-dru"
+  },
+  "license": "MIT",
+  "userConfig": {
+    "mode": {
+      "title": "Mode",
+      "type": "string",
+      "description": "auto: ping until the cost of pinging equals one cold rewrite (times stopFraction), then stop. manual: ping for durationMinutes. off: never ping.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "manual",
+        "off"
+      ]
+    },
+    "intervalMinutes": {
+      "title": "Ping interval (minutes)",
+      "type": "number",
+      "description": "Minutes between pings. 0 = automatic: TTL minus a safety margin (4 min on a 5m cache, 55 min on a 1h cache).",
+      "default": 0
+    },
+    "durationMinutes": {
+      "title": "Manual duration (minutes)",
+      "type": "number",
+      "description": "manual mode only: keep the cache warm this many minutes after your last turn.",
+      "default": 120
+    },
+    "stopFraction": {
+      "title": "Stop at fraction of break-even",
+      "type": "number",
+      "description": "auto mode only: stop at this fraction of the break-even time. 1 = never spend more than one cold rewrite; 0.5 = stop when half of it is spent.",
+      "default": 1
+    },
+    "ttl": {
+      "title": "Cache TTL",
+      "type": "string",
+      "description": "Which cache TTL your main conversation uses. detect = read it from your settings/env/auth mode.",
+      "default": "detect",
+      "options": [
+        "detect",
+        "5m",
+        "1h"
+      ]
+    },
+    "inputPricePerMTok": {
+      "title": "Base input price override ($/MTok)",
+      "type": "number",
+      "description": "Override the base input price in $/MTok (0 = built-in table from the Claude pricing page). Set this for Bedrock if its rates differ.",
+      "default": 0
+    },
+    "cacheReadMultiplier": {
+      "title": "Cache-read multiplier override",
+      "type": "number",
+      "description": "Override the cache-read multiplier vs base input (0 = built-in: 0.1, or 0.05 on Opus/Sonnet 5.5, 0.025 on Fable/Mythos 5.1).",
+      "default": 0
+    },
+    "endAction": {
+      "title": "When warming stops",
+      "type": "string",
+      "description": "What to do when warming stops. lapse: let the cache expire. compact: compact the conversation while the cache is still warm, so the eventual rebuild is small.",
+      "default": "lapse",
+      "options": [
+        "lapse",
+        "compact"
+      ]
+    },
+    "blockIdleCompaction": {
+      "title": "Block idle compaction while warming",
+      "type": "boolean",
+      "description": "While warming, skip Claude Code's own idle compaction so the conversation stays intact.",
+      "default": true
+    },
+    "verbose": {
+      "title": "Verbose logging",
+      "type": "boolean",
+      "description": "Log every ping's token usage to the transcript.",
+      "default": false
+    }
+  }
+}
