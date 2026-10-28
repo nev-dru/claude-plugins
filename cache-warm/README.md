@@ -63,13 +63,25 @@ Settings live in the plugin's config (`/plugin` → Installed → cache-warm, or
 - **Bedrock**: 1h TTL availability varies by model; check the model row in the Bedrock prompt-caching docs. Bedrock cache rates may differ from Anthropic's table: set `inputPricePerMTok` / `cacheReadMultiplier`.
 - **LiteLLM / gateways**: the gateway must forward `cache_control` markers and the `anthropic-beta` header unchanged. If the first ping reports a miss, the gateway is rewriting the request.
 
-## Safety rails
+## Guardrails
 
-- The first ping after a turn must hit the cache; if it misses, warming stops (a miss means pings would each cost a full rewrite).
-- Two misses or three API errors in one idle period stop warming.
-- Any real turn cancels warming immediately; the turn itself refreshes the cache.
-- While warming, Claude Code's own idle compaction is skipped (configurable), so history isn't discarded for nothing.
-- The session must stay open: a mod only runs inside a live Claude Code process. Closing the terminal ends warming.
+The one failure that matters is a ping that arrives after the cache expired: it doesn't read the prefix, it rewrites it at full price, and a loop of those would drain money fast. Everything below exists to make that impossible to repeat.
+
+- **The TTL clock starts when the request starts.** The mod stamps the cache from the moment each request is sent, not from the end of its response: a three-minute generation on a five-minute cache leaves two minutes, and the mod knows it.
+- **Latency-adaptive margin.** Every ping's round-trip is measured. The ping is sent `max(45s, 2.5× smoothed RTT, 1.5× slowest RTT) + 15s` before expiry, so a slow link pushes pings earlier. If the margin would exceed half the TTL, warming pauses with a suggestion to use the 1h TTL.
+- **Missed-window check.** Before sending, the mod estimates when the ping will reach the API (now + half an RTT). If that's past expiry (the laptop slept, the timer ran late), it does not ping; it reports the miss and lets the cache lapse.
+- **Every response is classified**: hit (read ≥ 80 % of the prefix, wrote < 5 %), partial, write (wrote ≥ 50 %, read < 20 %), or none. A ping that isn't a hit is a loss event, and the cause is worked out:
+  - first ping of an idle period, sent well inside the TTL, and it wrote → the fork's request differs from the main thread (a gateway rewriting `cache_control`, a provider quirk). Warming **pauses for the session**; `/cachewarm on` resumes once you've fixed it.
+  - sent near the edge and it wrote → expired in flight. The margin is raised to the observed latency and warming continues unless the link is now too slow for the TTL.
+  - both counts zero → caching is off for this model or provider; pause.
+  - two non-hits in one idle period → pause.
+- **Per-idle-period cap.** Once pings in one idle period have cost what a cold rewrite would, warming stops regardless of the plan.
+- **Session cap.** Two consecutive idle periods that spent on pings without a warm return pause automatic warming (you keep leaving for longer than the break-even point; lower `stopFraction` or use the 1h TTL).
+- **Main-thread health.** If your own last two requests rewrote a prefix that should have been warm, caching isn't working on this provider and the mod doesn't warm until a real turn reads the cache again.
+- **API errors**: rate-limit, overload and 5xx answers retry with backoff, but only while the retry can still land inside the window; anything else stops.
+- **No concurrent pings**, any real turn cancels warming, idle compaction is skipped while warming, and `/cachewarm ping` refuses to ping a cache it believes is cold unless you add `force`.
+- **The TTL is learned, not only configured.** A hit after a gap longer than five minutes with no pings can only come from a one-hour entry, and a rewrite inside the hour after a five-minute-plus gap means five minutes; the band's TTL source changes to `observed` when that happens.
+- The session must stay open: a mod only runs inside a live Claude Code process.
 
 See `VALIDATE.md` for the experiments that confirm the assumptions on your provider before trusting the numbers.
 

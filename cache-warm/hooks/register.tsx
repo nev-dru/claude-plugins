@@ -159,9 +159,19 @@ const S = {
   idleSpentPct: 0,
   lastPingUsd: undefined as number | undefined,
   avgPingUsd: undefined as number | undefined,
+  idleRealized: false, // this idle period ended in a warm return
   // a return to check: did pings keep the cache warm through an idle period
   // longer than the TTL? Resolved by the first request of the next turn.
   pendingReturn: undefined as { prefix: number; saving: number } | undefined,
+  // guardrails
+  pinging: false, // a fork is in flight
+  rttMax: 0, // slowest ping round-trip this session, ms
+  rttEma: 0, // smoothed ping round-trip, ms
+  retryBackoffMs: 0, // after a 429/overloaded answer
+  paused: '', // why automatic warming is off until /cachewarm on
+  consecutiveLosses: 0, // idle periods that spent on pings and never came back warm
+  mainWrites: 0, // consecutive main-thread requests that rewrote a prefix that should have been warm
+  gapPings: 0, // pings made since the last real request, judged by the next one
   // session totals
   pings: 0,
   spent: 0,
@@ -170,6 +180,7 @@ const S = {
   returnsWarm: 0,
   returnsCold: 0,
   misses: 0,
+  writes: 0,
   // /cachewarm overrides for this session
   overrideMode: undefined as Mode | undefined,
   overrideInterval: undefined as number | undefined,
@@ -180,14 +191,47 @@ function mode(): Mode {
   return S.overrideMode ?? S.o.mode
 }
 
+// How long before the cache's expiry a ping is sent. The TTL runs from the
+// moment the API starts reading the request, and on a slow connection a
+// multi-megabyte prefix takes a while to upload, so the margin grows with the
+// round-trips we have observed: a ping that arrives after expiry doesn't read
+// the cache, it rewrites it, which is the one outcome this mod exists to avoid.
+function marginMs(): number {
+  const fromLatency = Math.max(2.5 * S.rttEma, 1.5 * S.rttMax) + 15_000
+  return Math.max(SAFETY_MS, Math.ceil(fromLatency))
+}
+
+// True when the connection is too slow for this TTL: a ping would need to be
+// sent so early that it hardly extends anything.
+function tooSlowForTtl(): boolean {
+  return marginMs() > TTL_MS[S.ttl] / 2
+}
+
 function intervalMs(): number {
   const want =
     S.overrideInterval ?? (S.o.intervalMinutes > 0 ? S.o.intervalMinutes * 60_000 : defaultIntervalMs(S.ttl))
-  return Math.max(30_000, Math.min(want, TTL_MS[S.ttl] - SAFETY_MS))
+  return Math.max(30_000, Math.min(want, TTL_MS[S.ttl] - marginMs()))
 }
 
 function priceNow(): Pricing {
   return pricing(S.model, S.prefixTokens, S.o)
+}
+
+// What a response's usage says the API did with the prefix.
+type CacheOutcome = 'hit' | 'partial' | 'write' | 'none'
+function classify(u: ModelUsage, prefix: number): CacheOutcome {
+  if (prefix <= 0) return 'none'
+  const read = u.cache_read_input_tokens / prefix
+  const wrote = u.cache_creation_input_tokens / prefix
+  if (read >= 0.8 && wrote < 0.05) return 'hit'
+  if (wrote >= 0.5 && read < 0.2) return 'write'
+  if (read > 0.05 || wrote > 0.05) return 'partial'
+  return 'none'
+}
+
+function noteRtt(ms: number): void {
+  S.rttMax = Math.max(S.rttMax, ms)
+  S.rttEma = S.rttEma ? 0.7 * S.rttEma + 0.3 * ms : ms
 }
 
 function planStopAt(from: number): number {
@@ -200,7 +244,8 @@ function phase(now: number): Phase {
   if (S.turnRunning) return 'turn'
   if (S.warming) return 'warming'
   if (!S.lastRequestAt) return 'none'
-  return now - S.lastRequestAt < TTL_MS[S.ttl] ? 'warm' : 'cold'
+  if (now - S.lastRequestAt < TTL_MS[S.ttl]) return 'warm'
+  return S.paused ? 'paused' : 'cold'
 }
 
 function snapshot(now: number): CacheView {
@@ -216,6 +261,9 @@ function snapshot(now: number): CacheView {
     nextPingAt: S.nextPingAt,
     stopAt: S.stopAt,
     mode: mode(),
+    marginMs: marginMs(),
+    rttMs: S.rttMax,
+    paused: S.paused,
     idlePings: S.idlePings,
     idleSpent: S.idleSpent,
     pings: S.pings,
@@ -225,6 +273,7 @@ function snapshot(now: number): CacheView {
     returnsWarm: S.returnsWarm,
     returnsCold: S.returnsCold,
     misses: S.misses,
+    writes: S.writes,
   }
 }
 
@@ -288,6 +337,26 @@ function clearWarming(): void {
   S.warming = false
 }
 
+// An idle period that spent on pings and didn't end in a warm return is a loss.
+// Two in a row and automatic warming pauses until /cachewarm on: a pattern of
+// leaving for longer than the break-even point should not keep costing.
+function closeIdlePeriod($: EngineInterface): void {
+  const pinged = S.idlePings > 0
+  const realized = S.idleRealized
+  S.idlePings = 0
+  S.idleRealized = false
+  if (!pinged) return
+  if (realized) {
+    S.consecutiveLosses = 0
+    return
+  }
+  S.consecutiveLosses += 1
+  if (S.consecutiveLosses >= 2 && !S.paused) {
+    S.paused = `${S.consecutiveLosses} idle periods spent on pings without a warm return`
+    $.ui.log(`paused: ${S.paused}. Run /cachewarm on to resume, or set a shorter stopFraction.`)
+  }
+}
+
 async function stopWarming($: EngineInterface, why: string): Promise<void> {
   const wasWarming = S.warming
   clearWarming()
@@ -317,8 +386,22 @@ function schedulePing($: EngineInterface, now: number): void {
   void publish($)
 }
 
-async function startWarming($: EngineInterface, now: number): Promise<void> {
+async function startWarming($: EngineInterface, now: number, force = false): Promise<void> {
   if (mode() === 'off' || S.warming) return
+  if (S.paused && !force) return
+  if (S.mainWrites >= 2 && !force) {
+    // The main thread itself keeps rewriting a prefix that should have been
+    // warm: caching isn't working on this provider or model, so pings would
+    // write too. Leave it alone until a real turn reads the cache again.
+    if (S.o.verbose) $.ui.log('not warming: the last two requests rewrote the prefix; caching looks unhealthy here')
+    return
+  }
+  if (tooSlowForTtl() && !force) {
+    S.paused = `ping round-trips up to ${Math.round(S.rttMax / 1000)}s are too slow for a ${S.ttl} cache; use promptCacheTtl 1h`
+    $.ui.log(`paused: ${S.paused}`)
+    await publish($)
+    return
+  }
   if (S.prefixTokens < 1024) {
     // Below every model's minimum cacheable prefix there is nothing to keep warm.
     try {
@@ -329,7 +412,9 @@ async function startWarming($: EngineInterface, now: number): Promise<void> {
   S.warming = true
   S.idlePings = S.idleMisses = 0
   S.idleSpent = S.idleSpentPct = 0
+  S.idleRealized = false
   S.avgPingUsd = undefined
+  S.retryBackoffMs = 0
   S.idleStartAt = S.lastRequestAt || now
   S.stopAt = planStopAt(S.idleStartAt)
   if (S.stopAt <= now) {
@@ -352,14 +437,37 @@ function fiveHour(s?: SessionUsage): number | undefined {
 }
 
 async function ping($: EngineInterface): Promise<void> {
-  if (!S.warming || S.turnRunning) return
+  if (!S.warming || S.turnRunning || S.pinging) return
+  const now0 = await $.clock.now()
+
+  // Guard 1: never ping a cache that may already be gone. The TTL runs from
+  // the request's start at the API, and the body takes time to upload, so if
+  // the expected arrival is past expiry the ping would be a full rewrite.
+  const expiresAt = S.lastRequestAt + TTL_MS[S.ttl]
+  const arrival = now0 + Math.max(1000, S.rttEma / 2)
+  if (arrival >= expiresAt) {
+    await stopWarming(
+      $,
+      `the ping window was missed (cache expired ${fmtClock(expiresAt)}; a sleep, a stall or a slow link); not rewriting it`,
+    )
+    return
+  }
+
+  S.pinging = true
   let before: SessionUsage | undefined
   try {
     before = await $.session.usage()
   } catch {}
   const t0 = await $.clock.now()
-  const r = await $.model.fork({ prompt: PING_PROMPT })
+  let r: Awaited<ReturnType<EngineInterface['model']['fork']>>
+  try {
+    r = await $.model.fork({ prompt: PING_PROMPT })
+  } finally {
+    S.pinging = false
+  }
   const t1 = await $.clock.now()
+  noteRtt(t1 - t0)
+
   if (!('usage' in r)) {
     await stopWarming($, 'nothing to fork yet (no completed turn in this conversation)')
     return
@@ -367,16 +475,36 @@ async function ping($: EngineInterface): Promise<void> {
   if (!r.isAnswered && r.reason === 'api-error') {
     S.idleMisses += 1
     S.misses += 1
+    const retryable = r.error === 'rate_limit' || r.error === 'overloaded' || r.error === 'server_error' || r.status === null
     $.ui.log(`ping failed: ${r.error} (${r.status ?? 'no response'})`)
-    if (S.idleMisses >= 3) {
-      await stopWarming($, 'three failed pings')
+    if (!retryable || S.idleMisses >= 3) {
+      await stopWarming($, retryable ? 'three failed pings' : `ping refused: ${r.error}`)
       return
     }
-    schedulePing($, t1)
+    // Guard 2: retry with backoff, but only inside the window; a retry that
+    // would land after expiry is pointless and expensive, so give up instead.
+    S.retryBackoffMs = S.retryBackoffMs ? Math.min(S.retryBackoffMs * 2, 120_000) : 15_000
+    const retryAt = t1 + S.retryBackoffMs
+    if (retryAt + Math.max(1000, S.rttEma / 2) >= expiresAt - 5_000) {
+      await stopWarming($, 'the API kept refusing pings until the cache expired')
+      return
+    }
+    S.timer?.cancel()
+    S.nextPingAt = retryAt
+    S.timer = $.clock.after(S.retryBackoffMs, () => {
+      void ping($)
+    })
+    await publish($)
     return
   }
-  S.lastRequestAt = t0
+  S.retryBackoffMs = 0
   const u = r.usage
+  const outcome = classify(u, S.prefixTokens)
+  const prevRequestAt = S.lastRequestAt
+  // A hit (or a partial read) refreshed the entry from this request's start.
+  // A write made a new entry, also from this request's start, but at full cost.
+  if (outcome !== 'none') S.lastRequestAt = t0
+
   let after: SessionUsage | undefined
   try {
     after = await $.session.usage()
@@ -397,30 +525,63 @@ async function ping($: EngineInterface): Promise<void> {
   S.spent += cost
   S.lastPingUsd = cost
   S.avgPingUsd = S.idleSpent / S.idlePings
+  if (!S.warming) {
+    // A turn started while the ping was in flight: the cost counts, the rest doesn't.
+    await publish($)
+    return
+  }
 
-  const hit = u.cache_read_input_tokens >= 0.8 * S.prefixTokens
-  if (S.o.verbose || !hit) {
+  if (S.o.verbose || outcome !== 'hit') {
     $.ui.log(
-      `ping #${S.idlePings}: read ${fmtK(u.cache_read_input_tokens)} · wrote ${fmtK(u.cache_creation_input_tokens)} · ` +
-        `uncached ${fmtK(u.input_tokens)} · out ${u.output_tokens} · ${fmtUsd(cost)} · ${((t1 - t0) / 1000).toFixed(1)}s` +
-        (hit ? '' : ' · MISS: the prefix was not served from cache'),
+      `ping #${S.idlePings} ${outcome}: read ${fmtK(u.cache_read_input_tokens)} · wrote ${fmtK(u.cache_creation_input_tokens)} · ` +
+        `uncached ${fmtK(u.input_tokens)} · out ${u.output_tokens} · ${fmtUsd(cost)} · ${((t1 - t0) / 1000).toFixed(1)}s`,
     )
   }
-  if (!hit) {
+
+  // Guard 3: a ping that wrote or missed is a loss event. Work out why and
+  // stop before it can happen twice.
+  if (outcome !== 'hit') {
     S.idleMisses += 1
     S.misses += 1
-    if (S.idlePings === 1) {
-      // The very first ping should always hit: the main thread just ran. A
-      // miss here means the fork's request differs from the main thread's
-      // (a gateway rewriting cache_control, a provider quirk, an unsupported
-      // model). Pinging would then cost a full rewrite each time, so stop.
-      await stopWarming($, 'first ping missed the cache; see /cachewarm calc and VALIDATE.md')
+    if (outcome === 'write') S.writes += 1
+    const sentWithin = t0 - (prevRequestAt || t0) // how long after the last refresh this ping went out
+    const fresh = sentWithin < TTL_MS[S.ttl] - marginMs()
+    if (outcome === 'none') {
+      S.paused = 'pings are not cached at all on this provider or model (both counts zero)'
+      await stopWarming($, S.paused)
       return
+    }
+    if (S.idlePings === 1 && fresh) {
+      // The cache was certainly alive and the fork still didn't read it: the
+      // fork's request differs from the main thread's (a gateway rewriting
+      // cache_control, a provider quirk). Every ping would write, so pause.
+      S.paused = 'the first ping rewrote a live cache: the fork request differs from the main thread (gateway or provider)'
+      await stopWarming($, S.paused)
+      return
+    }
+    if (!fresh) {
+      // Expired in flight: the link is slower than the margin allowed for.
+      noteRtt(Math.max(t1 - t0, marginMs()))
+      $.ui.log(`the cache expired before this ping arrived; ping margin raised to ${fmtCountdown(marginMs())}`)
+      if (tooSlowForTtl()) {
+        S.paused = `the connection is too slow for a ${S.ttl} cache (margin ${fmtCountdown(marginMs())}); use promptCacheTtl 1h`
+        await stopWarming($, S.paused)
+        return
+      }
     }
     if (S.idleMisses >= 2) {
-      await stopWarming($, 'repeated cache misses; shorten intervalMinutes or check the provider')
+      S.paused = 'two pings in one idle period rewrote or missed the cache'
+      await stopWarming($, S.paused)
       return
     }
+  }
+
+  // Guard 4: once this idle period has spent what a cold rewrite would cost,
+  // pinging can no longer come out ahead, whatever the plan said.
+  const e = economics(S.prefixTokens, S.ttl, priceNow(), S.avgPingUsd)
+  if (S.idleSpent >= e.saving * Math.max(0.05, S.o.stopFraction)) {
+    await stopWarming($, `spent ${fmtUsd(S.idleSpent)} this idle period, the cost of a cold rewrite; letting it lapse`)
+    return
   }
   // Re-plan with the measured ping cost: the break-even point moves if pings
   // cost more (thinking tokens) or less than the estimate.
@@ -457,7 +618,11 @@ function statusText(now: number): string {
     `session: ${S.pings} pings, ${fmtUsd(S.spent)} spent${S.spentPct ? ` (${S.spentPct.toFixed(1)}% of the 5h window)` : ''}, ` +
     `${fmtUsd(S.saved)} saved, net ${fmtUsd(S.saved - S.spent)}; ` +
     `${S.returnsWarm} warm return${S.returnsWarm === 1 ? '' : 's'}, ${S.returnsCold} cold, ${S.misses} misses`
-  const head = `${S.provider} · TTL ${S.ttl} (${S.ttlSource}) · model ${S.model || '?'} · prefix ${fmtK(S.prefixTokens)} tokens`
+  const head =
+    `${S.provider} · TTL ${S.ttl} (${S.ttlSource}) · model ${S.model || '?'} · prefix ${fmtK(S.prefixTokens)} tokens · ` +
+    `ping margin ${fmtCountdown(marginMs())}${S.rttMax ? ` (slowest ping ${(S.rttMax / 1000).toFixed(1)}s)` : ''}` +
+    (S.paused ? `\nPAUSED: ${S.paused} (/cachewarm on to resume)` : '') +
+    (S.mainWrites >= 2 ? '\ncaching looks unhealthy: the last two requests rewrote the prefix' : '')
   const ph = phase(now)
   if (ph === 'none') return `cache-warm (mode ${mode()}) · ${head}\nno turn yet; warming starts when a turn completes.\n${totals}`
   if (!S.warming) {
@@ -505,6 +670,10 @@ export const register: Register = (on, options) => {
       S.returnsWarm = kept.returnsWarm
       S.returnsCold = kept.returnsCold
       S.misses = kept.misses
+      S.writes = kept.writes
+      S.rttMax = kept.rttMs
+      S.rttEma = kept.rttMs ? kept.rttMs / 1.5 : 0
+      S.paused = kept.paused
       S.prefixTokens = kept.prefixTokens
       S.lastRequestAt = kept.lastRequestAt
       S.model = kept.model || S.model
@@ -539,6 +708,7 @@ export const register: Register = (on, options) => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       const now = await $.clock.now()
+      S.gapPings = S.idlePings
       // Did pings carry the cache through an idle period longer than the TTL?
       // Without them the first request now would be a cold rewrite. The first
       // turn.step of this turn settles it by what the API actually served.
@@ -548,6 +718,7 @@ export const register: Register = (on, options) => {
         S.pendingReturn = { prefix: S.prefixTokens, saving: ec.saving }
       } else {
         S.pendingReturn = undefined
+        closeIdlePeriod($) // pings inside the TTL could not have saved anything
       }
       S.turnRunning = true
       clearWarming() // the user is back: every real request refreshes the cache
@@ -557,25 +728,50 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.step', async function* ($, e, next) {
+    // The TTL runs from the request's start, not from the end of its response:
+    // a long generation eats into the window, so take the time before sending.
+    const started = e.agentId === undefined ? await $.clock.now() : 0
     const result = yield* next(e)
     if (e.agentId === undefined && result.usage) {
       const u = result.usage
+      const outcome = classify(u, S.prefixTokens)
+      const gap = S.lastRequestAt ? started - S.lastRequestAt : 0
+
       if (S.pendingReturn) {
         const hit = u.cache_read_input_tokens >= 0.8 * S.pendingReturn.prefix
         if (hit) {
           S.saved += S.pendingReturn.saving
           S.returnsWarm += 1
+          S.idleRealized = true
           if (S.o.verbose) $.ui.log(`warm return: saved ${fmtUsd(S.pendingReturn.saving)}`)
         } else {
           S.returnsCold += 1
-          $.ui.log(`cold return despite ${S.idlePings} pings: the API rewrote ${fmtK(u.cache_creation_input_tokens)} tokens`)
+          $.ui.log(`cold return despite ${S.gapPings} pings: the API rewrote ${fmtK(u.cache_creation_input_tokens)} tokens`)
         }
         S.pendingReturn = undefined
+        closeIdlePeriod($)
       }
+
+      // Learn the TTL actually in effect from gaps that had no pings: a hit
+      // after more than five minutes can only come from a one-hour entry, and
+      // a rewrite inside the hour after a five-minute gap means five minutes.
+      if (S.gapPings === 0 && S.prefixTokens > 0 && gap > TTL_MS['5m'] + marginMs() && gap < TTL_MS['1h'] - marginMs()) {
+        if (outcome === 'hit' && S.ttl !== '1h') [S.ttl, S.ttlSource] = ['1h', `observed: hit after a ${fmtMin(gap)} gap`]
+        else if (outcome === 'write' && S.ttl !== '5m') [S.ttl, S.ttlSource] = ['5m', `observed: rewrite after a ${fmtMin(gap)} gap`]
+      }
+      // Cache health of the main thread itself: a rewrite of a prefix that
+      // should still have been warm, twice in a row, means caching isn't
+      // working here, and pings would only add to the bill.
+      if (S.prefixTokens > 0 && gap > 0 && gap < TTL_MS[S.ttl] - marginMs()) {
+        if (outcome === 'write') S.mainWrites += 1
+        else if (outcome === 'hit') S.mainWrites = 0
+      }
+      S.gapPings = 0
+
       // Everything the request carried is the prefix the next cold turn rewrites.
       S.prefixTokens = u.cache_read_input_tokens + u.cache_creation_input_tokens + u.input_tokens
       S.model = u.model || S.model
-      S.lastRequestAt = await $.clock.now()
+      S.lastRequestAt = started
       void publish($)
     }
     return result
@@ -641,14 +837,20 @@ export const register: Register = (on, options) => {
         stateColor = 'warning'
         state = `cold · next turn rewrites ${fmtK(v.prefixTokens)} tok`
         break
+      case 'paused':
+        stateColor = 'warning'
+        state = `paused · ${narrow ? 'see /cachewarm' : v.paused}`
+        break
     }
+    if (v.phase === 'warming' && !narrow) state += ` · margin ${fmtCountdown(v.marginMs)}`
     const net = v.saved - v.spent
     const spentText = v.spentPct > 0 ? `${fmtUsd(v.spent)} (${v.spentPct.toFixed(1)}% of 5h)` : fmtUsd(v.spent)
     const totals =
       `${v.pings} ping${v.pings === 1 ? '' : 's'} · spent ${spentText} · saved ${fmtUsd(v.saved)} · net ` +
       (net >= 0 ? '+' : '') +
       fmtUsd(net) +
-      (narrow || v.misses === 0 ? '' : ` · ${v.misses} miss${v.misses === 1 ? '' : 'es'}`)
+      (narrow || v.misses === 0 ? '' : ` · ${v.misses} miss${v.misses === 1 ? '' : 'es'}`) +
+      (narrow || v.writes === 0 ? '' : ` · ${v.writes} rewrite${v.writes === 1 ? '' : 's'}`)
 
     return (
       <Box flexDirection="column">
@@ -682,10 +884,19 @@ export const register: Register = (on, options) => {
         await stopWarming($, 'turned off')
         return { text: 'cache-warm off for this session.' }
       case 'on':
-      case 'auto':
+      case 'auto': {
         S.overrideMode = 'auto'
-        if (!S.warming) void startWarming($, now)
-        return { text: `cache-warm auto: ping every ${fmtMin(intervalMs())} until break-even × ${S.o.stopFraction}.` }
+        const resumed = S.paused
+        S.paused = ''
+        S.consecutiveLosses = 0
+        S.mainWrites = 0
+        if (!S.warming && !S.turnRunning) void startWarming($, now, true)
+        return {
+          text:
+            `cache-warm auto: ping every ${fmtMin(intervalMs())} (margin ${fmtCountdown(marginMs())}) until break-even × ${S.o.stopFraction}.` +
+            (resumed ? ` Resumed after: ${resumed}.` : ''),
+        }
+      }
       case 'manual':
         S.overrideMode = 'manual'
         if (n > 0) S.overrideDuration = n
@@ -703,6 +914,13 @@ export const register: Register = (on, options) => {
         await stopWarming($, 'stopped by /cachewarm stop')
         return { text: 'stopped; the cache will lapse after the TTL.' }
       case 'ping': {
+        const ph = phase(now)
+        if ((ph === 'cold' || ph === 'paused') && arg !== 'force') {
+          return {
+            text: `the cache expired ${fmtClock(S.lastRequestAt + TTL_MS[S.ttl])}; a ping now would rewrite ${fmtK(S.prefixTokens)} tokens, not read them. /cachewarm ping force to do it anyway.`,
+          }
+        }
+        if (ph === 'turn') return { text: 'a turn is running; it refreshes the cache itself.' }
         if (!S.warming) {
           S.warming = true
           S.idleStartAt = S.idleStartAt || now

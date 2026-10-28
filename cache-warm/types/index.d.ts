@@ -1,5 +1,5 @@
 export type Ttl = '5m' | '1h'
-export type Phase = 'none' | 'turn' | 'warming' | 'warm' | 'cold'
+export type Phase = 'none' | 'turn' | 'warming' | 'warm' | 'cold' | 'paused'
 
 // What the band draws: a snapshot the hooks publish, plus `now` so countdowns tick.
 export type CacheView = {
@@ -10,10 +10,13 @@ export type CacheView = {
   provider: string
   model: string
   prefixTokens: number
-  lastRequestAt: number // the cache's TTL runs from here
+  lastRequestAt: number // the cache's TTL runs from here (the request's start)
   nextPingAt: number
   stopAt: number
   mode: string
+  marginMs: number // how long before expiry a ping is sent; grows with observed latency
+  rttMs: number // the slowest ping round-trip seen this session
+  paused: string // why automatic warming is paused, or ''
   // this idle period
   idlePings: number
   idleSpent: number
@@ -25,6 +28,7 @@ export type CacheView = {
   returnsWarm: number // idle periods longer than the TTL that still came back warm
   returnsCold: number
   misses: number
+  writes: number // pings that rewrote the prefix instead of reading it
 }
 
 declare module 'claude-code' {

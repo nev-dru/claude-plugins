@@ -1,6 +1,6 @@
 {
   "name": "cache-warm",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Keeps this session's prompt cache warm while you step away, and stops at the break-even point so it can only ever save tokens.",
   "author": {
     "name": "nev-dru"
