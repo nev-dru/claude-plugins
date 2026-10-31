@@ -1,6 +1,6 @@
 {
   "name": "cache-warm",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Keeps this session's prompt cache warm while you step away, and stops at the break-even point so it can only ever save tokens.",
   "author": {
     "name": "nev-dru"
@@ -11,7 +11,7 @@
     "mode": {
       "title": "Mode",
       "type": "string",
-      "description": "auto: ping until the cost of pinging equals one cold rewrite (times stopFraction), then stop. manual: ping for durationMinutes. off: never ping.",
+      "description": "auto: ping until the cost of pinging equals one cold rewrite (times stopFraction), then stop. manual: ping for durationMinutes, with no break-even cap. off: never ping.",
       "default": "auto",
       "options": [
         "auto",
@@ -40,7 +40,7 @@
     "ttl": {
       "title": "Cache TTL",
       "type": "string",
-      "description": "Which cache TTL your main conversation uses. detect = read it from your settings/env/auth mode.",
+      "description": "Which cache TTL your main conversation uses. detect = read it from your settings/env/auth mode. Naming 5m or 1h here also keeps forceTtl: auto from setting the TTL.",
       "default": "detect",
       "options": [
         "detect",
@@ -51,7 +51,7 @@
     "forceTtl": {
       "title": "Set the cache TTL for the session",
       "type": "string",
-      "description": "auto: set a 1h TTL (main conversation and forks) at session start, except through a gateway. 1h / 5m: set that TTL regardless of provider. off: leave the environment alone. A 1h write costs 2x instead of 1.25x on each turn's new tokens; one absence of more than five minutes per session pays that back. Never applied to a conversation that already has requests.",
+      "description": "auto: set a 1h TTL (main conversation and forks) at session start on an API key, Bedrock, Vertex or Foundry, unless you chose a TTL yourself (the ttl option, the environment, settings); a subscription (already 1h) and a gateway are left alone. 1h / 5m: set that TTL regardless of provider, your own setting or the TTL on record for a resumed conversation. FORCE_PROMPT_CACHING_5M always wins. Under auto, a resumed conversation gets the TTL the mod set for it before. off: leave the environment alone. A 1h write costs 2x instead of 1.25x on each turn's new tokens; one absence of more than five minutes per session pays that back. Otherwise never applied to a conversation that already has requests.",
       "default": "auto",
       "options": [
         "auto",
@@ -75,7 +75,7 @@
     "endAction": {
       "title": "When warming stops",
       "type": "string",
-      "description": "What to do when warming stops. lapse: let the cache expire. compact: compact the conversation while the cache is still warm, so the eventual rebuild is small.",
+      "description": "What to do when warming reaches its planned end (break-even, or the manual duration). lapse: let the cache expire. compact: compact the conversation while the cache is still warm, so the eventual rebuild is small. Never on /cachewarm off or stop, or once the cache has lapsed.",
       "default": "lapse",
       "options": [
         "lapse",
@@ -85,7 +85,7 @@
     "blockIdleCompaction": {
       "title": "Block idle compaction while warming",
       "type": "boolean",
-      "description": "While warming, skip Claude Code's own idle compaction so the conversation stays intact.",
+      "description": "While warming, skip Claude Code's own idle compaction so the conversation stays intact. A compaction for room (context at 75% of the auto-compact threshold or more) is never skipped.",
       "default": true
     },
     "verbose": {

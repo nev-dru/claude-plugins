@@ -2,7 +2,7 @@
 
 The cost model rests on a few assumptions that should be confirmed once per provider. Each experiment uses `/cachewarm ping` (set `verbose: true` first) and reads the usage it logs: `read` (cache_read_input_tokens), `wrote` (cache_creation_input_tokens), `uncached` (input_tokens), `out` (output_tokens).
 
-1. **A ping hits the cache.** Right after a turn, run `/cachewarm ping`. Expect `read ≈ prefix`, `wrote` small, `uncached` tiny. If `read` is near zero the fork's request differs from the main thread's (gateway rewriting `cache_control`, an unsupported model). Fix that before enabling warming.
+1. **A ping hits the cache.** Right after a turn, run `/cachewarm ping` (on a cache the mod believes cold it refuses unless you add `force`, and then expects the rewrite rather than diagnosing it). Expect `read ≈ prefix`, `wrote` small, `uncached` tiny. If `read` is near zero the fork's request differs from the main thread's (gateway rewriting `cache_control`, an unsupported model). Fix that before enabling warming.
 
 2. **A ping refreshes the TTL.** On a 5m cache: turn, wait 4 min, ping, wait 4 min, send a real turn. The real turn's `/usage` line (or a status line reading `current_usage`) should show cache reads, not a big write. Repeat on a 1h cache with 50-minute gaps if you run one.
 
@@ -16,6 +16,6 @@ The cost model rests on a few assumptions that should be confirmed once per prov
 
 7. **Subscription.** The mod reports ping cost as the change in the five-hour usage window. Check a few pings' deltas against a cold rebuild's delta to see how your plan weights cache reads vs writes.
 
-8. **Idle compaction (v2.1.290+).** On a 1h TTL in a terminal session, Claude Code can compact an idle conversation shortly before the cache expires. With `blockIdleCompaction: true` the mod skips that while warming; confirm you see the skip notice rather than a compaction.
+8. **Idle compaction (v2.1.290+).** On a 1h TTL in a terminal session, Claude Code can compact an idle conversation shortly before the cache expires. With `blockIdleCompaction: true` the mod skips an `auto` or `precompute` compaction while warming, as long as the context is under 75 % of the auto-compact threshold (a compaction for room always runs). Confirm you see the skip notice rather than a compaction; which trigger the idle compaction uses is not measured yet.
 
 Answered: a fork sent with a 1h TTL on a 5m session does **not** upgrade the entry for the price of the appended tokens. It rewrites the conversation at 2× (measured; `experiments/RESULTS.md`, finding 2).

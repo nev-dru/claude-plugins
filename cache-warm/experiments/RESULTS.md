@@ -18,7 +18,7 @@ All numbers are `usage` fields from `claude -p --output-format json` (`cache_rea
 
 4. **A fork after a turn with no tool call rewrites the last typed message.** Single-message probes: fork read 32,232 (system layer), wrote ~12,920 (the whole conversation layer, which there is one message). The history before the last typed message is replayed verbatim; per-request attachments on the last typed message differ. In a real session that delta is one message, not the whole conversation, and the mod counts it against the break-even.
 
-5. **Changing `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` mid-process is destructive.** A fork sent right after `$.env.set(...)` read 0 and rewrote all 45,152 tokens, system layer included. Set at process start, the same variable behaved normally (finding 2 still applies). The mod never touches it.
+5. **Changing `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` mid-process is destructive.** A fork sent right after `$.env.set(...)` read 0 and rewrote all 45,152 tokens, system layer included. Set at process start, the same variable behaved normally (finding 2 still applies). The mod only sets it together with the main variable, at session start, before any request (finding 8); never mid-process.
 
 6. **main → main hits in steady state.** Second run in a directory read 45,149 / wrote 0, so the probes' misses are not a first-run artifact.
 
@@ -28,8 +28,22 @@ All numbers are `usage` fields from `claude -p --output-format json` (`cache_rea
 
 ## What this means for the mod
 
-- The mod sets the TTL itself by default (`forceTtl: auto` → 1h on subscription, API key, Bedrock, Vertex and Foundry; untouched through a gateway) so warming does not depend on the user's environment. It never does this to a conversation that already has an assistant reply.
+- The mod sets the TTL itself by default (`forceTtl: auto` → 1h on an API key, Bedrock, Vertex and Foundry; a subscription, already 1h, and a gateway are left alone) so warming does not depend on the user's environment. A conversation that already has an assistant reply is left alone, unless the mod ran it before: then it gets the TTL on record for it, so it goes on in the mode its entries were written in.
 - Pings are safe only when the fork is in the same TTL mode as the main conversation. With the subagent bucket unset the fork inherits it, so the defaults are safe everywhere: API key and Bedrock 5m/5m, subscription 1h/1h.
 - On a 5m main conversation (API key, Bedrock, gateway), each ping buys five minutes: break-even is under an hour on 0.1× models, 1.6 h on Opus/Sonnet 5.5, 3.3 h on Fable 5.1. Set `promptCacheTtl: "1h"` (and, to be explicit, `subagentPromptCacheTtl: "1h"` too — never only the subagent one) and a ping buys an hour.
 - On a subscription (main 1h, fork inherits 1h) pings go out every 55 minutes: break-even 17–72 hours depending on the model.
 - The outcome of every ping is judged by what was read, and the write is charged to the break-even, so finding 4's delta is accounted for rather than treated as a failure.
+- Finding 2's lazy eviction (a 5m entry still read seven minutes on) is why the mod's observed-TTL check takes a hit as proof of 1h only after a gap of ten minutes or more.
+
+## Not measured yet
+
+What the mod assumes, and how each could be measured with a probe mod like `probe-mod/`:
+
+- **Over-plan vs. the env variable.** Whether Claude Code's drop to 5m past a subscription's plan usage overrides a `CLAUDE_CODE_PROMPT_CACHE_TTL` set in the environment. The mod leaves a subscription's TTL alone, so this matters only with `forceTtl: 1h` there. Measure: force 1h, cross 100 % of the five-hour window, read `ephemeral_5m/1h_input_tokens` on the next turn.
+- **Gateway variables for Vertex and Foundry.** The mod reads `ANTHROPIC_VERTEX_BASE_URL` and `ANTHROPIC_FOUNDRY_BASE_URL` as the base-URL overrides, and their own hosts as `aiplatform.googleapis.com` (global or regional, `us-east5-aiplatform.googleapis.com`) and `*.services.ai.azure.com`, `*.openai.azure.com` or `*.cognitiveservices.azure.com`. Check against Claude Code's provider docs.
+- **Session id across a resume.** The per-conversation TTL record is keyed by `$.session.id()`, assumed to stay the same under `--resume` and `--continue`. If it changes, a resumed conversation has no record and is left alone (the safe direction). Measure: log the id at `session.start` before and after a `--resume`.
+- **What `$.session.turns()` counts at `session.start`.** Assumed 0 for a new session, including one started with a prompt on the command line (`claude "..."`, `-p`); above 0, the transcript is read for an answer before anything is left alone. Measure: log both in a probe's `session.start`.
+- **Setting the TTL later.** Whether a value set in the first `turn.start` (rather than `session.start`) still governs that turn's first request. If it does, the mod could decide with the transcript loaded. Measure as finding 8, with the `$.env.set` moved.
+- **Which trigger Claude Code's idle compaction uses** (`auto` or `precompute`). The mod skips both while warming under 75 % of the auto-compact threshold.
+- **Bedrock 1h support for Sonnet 4 and Opus 4.0/4.1.** Only the Claude 3 models are held to 5m. Check the Bedrock prompt-caching docs.
+
